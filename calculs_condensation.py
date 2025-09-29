@@ -1,3 +1,5 @@
+import math
+
 from report import *
 import json
 
@@ -427,8 +429,18 @@ Res_therm = 0 / (ureg.watt / (ureg.meter ** 2 * ureg.kelvin))
 
 
 
-# Longueur du conduit de fumée
-L = 7.4 * ureg.m
+# Longueur du conduit=
+
+# Circuit de raccordement
+# L = 0.2 * ureg.m
+# Conduit de fumée interieur bâtiment
+# L = 6.23 * ureg.m
+# Conduit de fumée exterieur bâtiment
+# L = 1.2 * ureg.m
+
+# les segments doivent avoir la même longueur <= 0.5 m (pg 82 8.1)
+# on va faire 21 × 0.3 m + 4 × 0.3 m
+
 
 # Pg 20
 # la valeur doit être connue, ou en alternative il faut prendre les resultats des formules de l'annexe B
@@ -439,7 +451,10 @@ alpha_a_ext = 25 * ureg.watt / (ureg.meter ** 2 * ureg.kelvin)
 alpha_a_int = 8 * ureg.watt / (ureg.meter ** 2 * ureg.kelvin)
 
 # Calculs circuit de raccordement
-# Longueur du conduit de raccordement
+
+# Nombre de segments dans le circuit de raccordement
+NsegV = 1
+
 print("Circuit de raccordement")
 L_v = 0.2 * ureg.m
 T_in = T_e
@@ -447,28 +462,38 @@ T_uo = T_u = Q_(15, 'degC') # raccordement dans le batiment
 Res_therm = 0 / (ureg.watt / (ureg.meter ** 2 * ureg.kelvin))
 res_racc = solve_conduit(T_e=T_in, T_u=T_uv, T_uo=T_uo, L=L_v, dm=dm, D_h=D_h, Res_therm=Res_therm, alpha_a=alpha_a_int)
 print(json.dumps(res_racc, indent=2, default=str))
-# Calculs conduit de fumée
 
+# ==============================
+# Calculs conduit de fumée
+# ==============================
+
+# Nombre de segments dans le conduit de fumée
+Nseg = 21 + 4
+NSegK = math.inf
 
 L_tot = 0 * ureg.m
 # Dans le batiment
 T_in = res_racc['T_ob']
-for i in range(13):
-    L = 0.479 * ureg.m
+for i in range(21):
+    L = 0.3 * ureg.m
     L_tot += L
-    print(f"Tronçon intérieur du bâtiment {i+1}/13, longueur cumulée {L_tot.to('m')}")
+    print(f"Tronçon intérieur du bâtiment {i+1}/21, longueur cumulée {L_tot.to('m')}")
     T_uo = T_u = Q_(15, 'degC') # conduit dans le batiment
     Res_therm = 0 / (ureg.watt / (ureg.meter ** 2 * ureg.kelvin))
     res = solve_conduit(T_e=T_in, T_u=T_u, T_uo=T_uo, L=L, dm=dm, D_h=D_h, Res_therm=Res_therm, alpha_a=alpha_a_int)
     T_in = res['T_ob']
     print(json.dumps(res, indent=2, default=str))
+    if res['condensation']:
+        print(f"**Attention**: Condensation détectée dans le segment {i+1}/21 du conduit intérieur du bâtiment")
+        NSegK = min(i+1, NSegK)
 
 print("=============================")
 print("Sortie du batiment")
 print("=============================")
 # Exterieur batiment
-for i in range(3):
-    L = 0.4 * ureg.m
+for i in range(4):
+    print(f"Tronçon extérieur du bâtiment {i+1}/4")
+    L = 0.3 * ureg.m
     T_in = res['T_ob']
     T_uo = T_u = Q_(-15, 'degC') # conduit à l'exterieur
     Res_therm = 0 / (ureg.watt / (ureg.meter ** 2 * ureg.kelvin))
