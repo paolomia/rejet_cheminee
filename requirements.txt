@@ -1,2 +1,4 @@
 jupyter
 pint
+scipy
+matplotlib
