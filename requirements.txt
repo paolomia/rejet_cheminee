@@ -3,3 +3,4 @@ pint
 scipy
 matplotlib
 pandas
+joblib

@@ -2,6 +2,8 @@ import math
 
 from report import *
 import json
+from joblib import Memory
+
 
 def sigma_CO2_f(Q_N, f_x1, f_x2, f_x3):
     r"""
@@ -42,7 +44,7 @@ def sigma_H2O_f(f_w, sigma_CO2):
     return 100 / (1 + f_w / sigma_CO2) + 1.1
 
 
-def P_L_f(T_L, z, R_L):
+def p_L_f(T_L, z, R_L):
     r"""
     P_L = 97000 \cdot e^{\frac{-g \cdot z}{R_L \cdot T_L }}
     """
@@ -267,7 +269,7 @@ def solve_conduit_helper_sans_condensation(T_m, T_in, T_u, T_uo, L, m_dot, D_h, 
     # Prendre +15 °C pour tirage minimal ou pressio positive maximale ou niveau de l'admisson des fumées dans le conduits
 
     # Pression de l'air extérieur
-    p_L = P_L_f(T_L=T_L, z=z, R_L=R_L)
+    p_L = p_L_f(T_L=T_L, z=z, R_L=R_L)
     # show_latex(P_L_f.__doc__)
     # show_value(p_L)
 
@@ -285,12 +287,9 @@ def solve_conduit_helper_sans_condensation(T_m, T_in, T_u, T_uo, L, m_dot, D_h, 
     A = 3.1416 * (D_h / 2) ** 2  # m^2
     # show_value(A)
 
-    # Surface totale raccordement
-    A_v = U * L_v  # m^2
 
-    # Surface totale conduit de fumée
-    A_t = U * L  # m^2
-    # show_value(A_t)
+
+
 
     # rendement de l'appareil à combustion (%)
     eta = eta_w(Q_N=Q_N)
@@ -352,7 +351,7 @@ def solve_conduit_helper_sans_condensation(T_m, T_in, T_u, T_uo, L, m_dot, D_h, 
     # show_value(psi_smooth, 'psi_smooth')
 
     # Nombre de Nusselt
-    Nu = Nu_f(psi=psi, psi_smooth=psi_smooth, Re=Re, Pr=Pr, D_h=D_h, L_tot=L + L_v)
+    Nu = Nu_f(psi=psi, psi_smooth=psi_smooth, Re=Re, Pr=Pr, D_h=D_h, L_tot=L)
     # show_value(Nu, 'Nu')
 
     # Coefficient intener de transfert de chaleur par convection
@@ -401,8 +400,6 @@ def solve_conduit_helper_sans_condensation(T_m, T_in, T_u, T_uo, L, m_dot, D_h, 
     res = {
         'type_calcul': 'segment_sans_condensation',
         'A': A,
-        'A_v': A_v,
-        'A_t': A_t,
         'sigma_CO2': sigma_CO2,
         'eta': eta,
         'sigma_H2O': sigma_H2O,
@@ -485,7 +482,7 @@ def solve_conduit_helper_avec_condensation(T_iob, T_ob, T_in, T_u, T_uo, L, m_do
     # Prendre +15 °C pour tirage minimal ou pressio positive maximale ou niveau de l'admisson des fumées dans le conduits
 
     # Pression de l'air extérieur
-    p_L = P_L_f(T_L=T_L, z=z, R_L=R_L)
+    p_L = p_L_f(T_L=T_L, z=z, R_L=R_L)
     # show_latex(P_L_f.__doc__)
     # show_value(p_L)
 
@@ -502,9 +499,6 @@ def solve_conduit_helper_avec_condensation(T_iob, T_ob, T_in, T_u, T_uo, L, m_do
     # Section cheminée/appareil à combustion
     A = 3.1416 * (D_h / 2) ** 2  # m^2
     # show_value(A)
-
-    # Surface totale raccordement
-    A_v = U * L_v  # m^2
 
     # Surface totale conduit de fumée
     A_t = U * L  # m^2
@@ -569,7 +563,7 @@ def solve_conduit_helper_avec_condensation(T_iob, T_ob, T_in, T_u, T_uo, L, m_do
     # show_value(psi_smooth, 'psi_smooth')
 
     # Nombre de Nusselt
-    Nu = Nu_f(psi=psi, psi_smooth=psi_smooth, Re=Re, Pr=Pr, D_h=D_h, L_tot=L + L_v)
+    Nu = Nu_f(psi=psi, psi_smooth=psi_smooth, Re=Re, Pr=Pr, D_h=D_h, L_tot=L)
     # show_value(Nu, 'Nu')
 
     # Coefficient intener de transfert de chaleur par convection
@@ -657,8 +651,6 @@ def solve_conduit_helper_avec_condensation(T_iob, T_ob, T_in, T_u, T_uo, L, m_do
     res = {
         'type_calcul': 'segment_avec_condensation',
         'A': A,
-        'A_v': A_v,
-        'A_t': A_t,
         'sigma_CO2': sigma_CO2,
         'eta': eta,
         'sigma_H2O': sigma_H2O,
@@ -705,9 +697,6 @@ def solve_conduit_helper_avec_condensation(T_iob, T_ob, T_in, T_u, T_uo, L, m_do
     }
 
     return res
-
-
-
 
 
 
@@ -819,9 +808,6 @@ def solve_conduit(T_in, T_u, T_uo, L, m_dot, D_h, Res_therm, alpha_a, avec_conde
     return res
 
 
-
-
-
 def solve_conduit_old(T_in, T_u, T_uo, L, m_dot, D_h, Res_therm, alpha_a, avec_condensation=False, T_e=None, data_j_prev=None):
 
     if T_e is None:
@@ -894,190 +880,188 @@ def solve_conduit_old(T_in, T_u, T_uo, L, m_dot, D_h, Res_therm, alpha_a, avec_c
     return res
 
 
-# Température fumée sortie foyer)
+def main():
+    # Température air ambiant à la sortie du conduit de fumée
+    # 5.7.1.3 pg 25, 0 °C (sans condensation)
+    T_uo = Q_(0, 'degC')
+    # ou -15 °C (avec condensation)
+    # T_uo = Q_(-15, 'degC')
+
+    # Température air ambiant dans la salle des chaudières
+    # 15 °C
+    T_ub = Q_(15, 'degC')
+
+    # Température air ambiant dans les zones chauffées
+    # 20 °C
+    T_uh = Q_(20, 'degC')
+
+    # Température air ambiant extérieure bâtiment
+    # égale à T_uo
+    T_ul = T_uo
+
+    # Température air ambiant non chauffées intérieur du bâtiment
+    # 0 °C
+    T_uu = Q_(0, 'degC')
+
+    # Température pour calcul d'exigeance de température de fumée
+
+    # raccord, on va dire 15 °C
+    T_uv = T_ub
+
+    # conduit de fumée, etant donné que la partie de cheminée à l'extérieur est < 1/4 de la longueur totale, on peut prendre 15 °C (Note 1 pg 26)
+    T_ut = Q_(15, 'degC')
+
+
+    # Longueur du conduit=
+
+    # Circuit de raccordement
+    # L = 0.2 * ureg.m
+    # Conduit de fumée interieur bâtiment
+    # L = 6.23 * ureg.m
+    # Conduit de fumée exterieur bâtiment
+    # L = 1.2 * ureg.m
+
+    # les segments doivent avoir la même longueur <= 0.5 m (pg 82 8.1)
+    # on va faire 21 × 0.3 m + 4 × 0.3 m
 
 
 
 
+    # Coefficient externe de transfert thermique exterieur
+    alpha_a_ext = 25 * ureg.watt / (ureg.meter ** 2 * ureg.kelvin)
+    alpha_a_int = 8 * ureg.watt / (ureg.meter ** 2 * ureg.kelvin)
 
 
-# Température air ambiant à la sortie du conduit de fumée
-# 5.7.1.3 pg 25, 0 °C (sans condensation)
-T_uo = Q_(0, 'degC')
-# ou -15 °C (avec condensation)
-# T_uo = Q_(-15, 'degC')
+    # Diamètre cheminée/appareil à combustion
+    D_h = 200 * ureg.mm
+    # Débit massique (fourni)
+    m_dot = 0.009 * ureg.kg / ureg.s  # kg/s
+    # Pg 20
+    # la valeur doit être connue, ou en alternative il faut prendre les resultats des formules de l'annexe B
+    T_e = Q_(300, 'degC')
+    all_data = []
+    # Calculs circuit de raccordement
 
-# Température air ambiant dans la salle des chaudières
-# 15 °C
-T_ub = Q_(15, 'degC')
+    # Nombre de segments dans le circuit de raccordement
+    NsegV = 1
 
-# Température air ambiant dans les zones chauffées
-# 20 °C
-T_uh = Q_(20, 'degC')
+    print("Circuit de raccordement")
+    L_v = 0.2 * ureg.m
+    T_in = T_e
+    T_uo = T_u = Q_(15, 'degC') # raccordement dans le batiment
+    Res_therm = 0 / (ureg.watt / (ureg.meter ** 2 * ureg.kelvin))
+    res_racc = solve_conduit_old(T_in=T_in, T_u=T_uv, T_uo=T_uo, L=L_v, m_dot=m_dot, D_h=D_h, Res_therm=Res_therm, alpha_a=alpha_a_int)
+    print(json.dumps(res_racc, indent=2, default=str))
 
-# Température air ambiant extérieure bâtiment
-# égale à T_uo
-T_ul = T_uo
+    all_data.append({**res_racc, 'segment': 0, 'L_cum': L_v })
+    # ==============================
+    # Calculs conduit de fumée
+    # ==============================
 
-# Température air ambiant non chauffées intérieur du bâtiment
-# 0 °C
-T_uu = Q_(0, 'degC')
+    # Nombre de segments dans le conduit de fumée
+    Nseg = 21 + 4
+    NSegK = math.inf
 
-# Température pour calcul d'exigeance de température de fumée
+    L_tot = 6.3 * ureg.m + 1.2 * ureg.m
+    L_tot_batiment = 6.3 * ureg.m
 
-# raccord, on va dire 15 °C
-T_uv = T_ub
+    L_cum = 0 * ureg.m
 
-# conduit de fumée, etant donné que la partie de cheminée à l'extérieur est < 1/4 de la longueur totale, on peut prendre 15 °C (Note 1 pg 26)
-T_ut = Q_(15, 'degC')
+    Nseg = 25
+    # Dans le batiment
+    T_in = res_racc['T_ob']
 
-
-# Longueur du conduit=
-
-# Circuit de raccordement
-# L = 0.2 * ureg.m
-# Conduit de fumée interieur bâtiment
-# L = 6.23 * ureg.m
-# Conduit de fumée exterieur bâtiment
-# L = 1.2 * ureg.m
-
-# les segments doivent avoir la même longueur <= 0.5 m (pg 82 8.1)
-# on va faire 21 × 0.3 m + 4 × 0.3 m
-
-
-
-
-# Coefficient externe de transfert thermique exterieur
-alpha_a_ext = 25 * ureg.watt / (ureg.meter ** 2 * ureg.kelvin)
-alpha_a_int = 8 * ureg.watt / (ureg.meter ** 2 * ureg.kelvin)
+    for i in range(Nseg):
+        L = L_tot / Nseg
+        L_cum += L
+        print(f"Segment chéminée {i+1}/{Nseg}, longueur cumulée {L_cum.to('m')}")
 
 
-# Diamètre cheminée/appareil à combustion
-D_h = 200 * ureg.mm
-# Débit massique (fourni)
-m_dot = 0.009 * ureg.kg / ureg.s  # kg/s
-# Pg 20
-# la valeur doit être connue, ou en alternative il faut prendre les resultats des formules de l'annexe B
-T_e = Q_(300, 'degC')
-all_data = []
-# Calculs circuit de raccordement
-
-# Nombre de segments dans le circuit de raccordement
-NsegV = 1
-
-print("Circuit de raccordement")
-L_v = 0.2 * ureg.m
-T_in = T_e
-T_uo = T_u = Q_(15, 'degC') # raccordement dans le batiment
-Res_therm = 0 / (ureg.watt / (ureg.meter ** 2 * ureg.kelvin))
-res_racc = solve_conduit_old(T_in=T_in, T_u=T_uv, T_uo=T_uo, L=L_v, m_dot=m_dot, D_h=D_h, Res_therm=Res_therm, alpha_a=alpha_a_int)
-print(json.dumps(res_racc, indent=2, default=str))
-
-all_data.append({**res_racc, 'segment': 0, 'L_cum': L_v })
-# ==============================
-# Calculs conduit de fumée
-# ==============================
-
-# Nombre de segments dans le conduit de fumée
-Nseg = 21 + 4
-NSegK = math.inf
-
-L_tot = 6.3 * ureg.m + 1.2 * ureg.m
-L_tot_batiment = 6.3 * ureg.m
-
-L_cum = 0 * ureg.m
-
-Nseg = 25
-# Dans le batiment
-T_in = res_racc['T_ob']
-
-for i in range(Nseg):
-    L = L_tot / Nseg
-    L_cum += L
-    print(f"Segment chéminée {i+1}/{Nseg}, longueur cumulée {L_cum.to('m')}")
+        if L_cum <= L_tot_batiment:
+            print("Le segment est entièrement à l'intérieur du bâtiment")
+            T_uo = T_u = Q_(15, 'degC')  # conduit dans le batiment
+            Res_therm = 0 / (ureg.watt / (ureg.meter ** 2 * ureg.kelvin))
+            alpha_a = alpha_a_int
+        else:
+            print("Le segment est au moins en partie à l'extérieur du bâtiment")
+            T_uo = T_u = Q_(-15, 'degC')  # conduit dans le batiment
+            # 45 mm de laine de roche → Res_therm ~ 1 (m²K)/W
+            Res_therm = 0 / (ureg.watt / (ureg.meter ** 2 * ureg.kelvin))
+            alpha_a = alpha_a_ext
 
 
-    if L_cum <= L_tot_batiment:
-        print("Le segment est entièrement à l'intérieur du bâtiment")
-        T_uo = T_u = Q_(15, 'degC')  # conduit dans le batiment
-        Res_therm = 0 / (ureg.watt / (ureg.meter ** 2 * ureg.kelvin))
-        alpha_a = alpha_a_int
-    else:
-        print("Le segment est au moins en partie à l'extérieur du bâtiment")
-        T_uo = T_u = Q_(-15, 'degC')  # conduit dans le batiment
-        # 45 mm de laine de roche → Res_therm ~ 1 (m²K)/W
-        Res_therm = 0 / (ureg.watt / (ureg.meter ** 2 * ureg.kelvin))
-        alpha_a = alpha_a_ext
+        res = solve_conduit_old(T_in=T_in, T_u=T_u, T_uo=T_uo, L=L, m_dot=m_dot, D_h=D_h, Res_therm=Res_therm, alpha_a=alpha_a, avec_condensation=True, data_j_prev=res if i > 0 else None)
+        all_data.append({**res, 'segment': i+1, 'L_cum': L_cum})
+        T_in = res['T_ob']
+        print(json.dumps(res, indent=2, default=str))
+        if res['condensation']:
+            print(f"**Attention**: Condensation détectée dans le segment {i+1}/{Nseg} du conduit")
+            NSegK = min(i+1, NSegK)
+
+    import matplotlib.pyplot as plt
+
+    # Préparation des données
+    x_array = [data['L_cum'].to('m').magnitude for data in all_data]
+    T_ob_array = [data['T_ob'].to('degC').magnitude for data in all_data]
+    T_iob_array = [data['T_iob'].to('degC').magnitude for data in all_data]
+    contr_condens_array = [data['contr_condens'].to('delta_degC').magnitude for data in all_data]
+    w_m_array = [data['w_m'].to('m/s').magnitude for data in all_data]
+    Re_array = [data['Re'] for data in all_data]
+    m_dot_array = [data['m_dot_o_j'].to("kg/s").magnitude for data in all_data]
+
+    # Création d'une figure avec 4 sous-graphiques alignés verticalement
+    fig, axes = plt.subplots(4, 1, figsize=(10, 18), sharex=True)
+
+    # --- Plot 1: Températures ---
+    axes[0].plot(x_array, T_ob_array, label='T_ob (°C)')
+    axes[0].plot(x_array, T_iob_array, label='T_iob (°C)')
+    axes[0].plot(x_array, contr_condens_array, label='contr condens', color='black', linestyle='--')
+    axes[0].axhline(y=res['t_p'].to('degC').magnitude, color='r', linestyle='--', label='T condensation (°C)')
+    axes[0].axhline(y=0, color='purple', linestyle='--', label='0 °C')
+    axes[0].axvline(x=L_tot_batiment.to('m').magnitude, color='g', linestyle='--', label='Extérieur')
+    axes[0].set_ylabel('Température (°C)')
+    axes[0].set_title('Profil de température')
+    axes[0].legend()
+    axes[0].grid()
+    axes[0].set_yticks(range(-10, 301, 10))
+
+    # --- Plot 2: Vitesse fumées ---
+    axes[1].plot(x_array, w_m_array, label='w_m (m/s)', color='orange')
+    axes[1].set_ylabel('Vitesse (m/s)')
+    axes[1].set_title('Vitesse des fumées')
+    axes[1].legend()
+    axes[1].grid()
+
+    # --- Plot 3: Reynolds ---
+    axes[2].plot(x_array, Re_array, label='Re', color='brown')
+    axes[2].set_ylabel('Re')
+    axes[2].set_title('Nombre de Reynolds')
+    axes[2].legend()
+    axes[2].grid()
+
+    # --- Plot 4: Débit massique ---
+    axes[3].plot(x_array, m_dot_array, label='m_dot (kg/s)', color='blue')
+    axes[3].set_xlabel('Longueur cumulée (m)')
+    axes[3].set_ylabel('Débit massique (kg/s)')
+    axes[3].set_title('Débit massique des fumées')
+    axes[3].legend()
+    axes[3].grid()
+
+    # Ajuster l’espacement
+    plt.tight_layout()
+    plt.show()
 
 
-    res = solve_conduit(T_in=T_in, T_u=T_u, T_uo=T_uo, L=L, m_dot=m_dot, D_h=D_h, Res_therm=Res_therm, alpha_a=alpha_a, avec_condensation=True, data_j_prev=res if i > 0 else None)
-    all_data.append({**res, 'segment': i+1, 'L_cum': L_cum})
-    T_in = res['T_ob']
-    print(json.dumps(res, indent=2, default=str))
-    if res['condensation']:
-        print(f"**Attention**: Condensation détectée dans le segment {i+1}/{Nseg} du conduit")
-        NSegK = min(i+1, NSegK)
+    # convert the dict to a panda dataframe
+    import pandas as pd
+    df = pd.DataFrame(all_data)
+    # adjust df e façon à utiliser des unités SI using to._base_units()
+    df_si = df.applymap(lambda x: x.to_base_units().magnitude if hasattr(x, 'to_base_units') else x)
 
-import matplotlib.pyplot as plt
-
-# Préparation des données
-x_array = [data['L_cum'].to('m').magnitude for data in all_data]
-T_ob_array = [data['T_ob'].to('degC').magnitude for data in all_data]
-T_iob_array = [data['T_iob'].to('degC').magnitude for data in all_data]
-contr_condens_array = [data['contr_condens'].to('delta_degC').magnitude for data in all_data]
-w_m_array = [data['w_m'].to('m/s').magnitude for data in all_data]
-Re_array = [data['Re'] for data in all_data]
-m_dot_array = [data['m_dot_o_j'].to("kg/s").magnitude for data in all_data]
-
-# Création d'une figure avec 4 sous-graphiques alignés verticalement
-fig, axes = plt.subplots(4, 1, figsize=(10, 18), sharex=True)
-
-# --- Plot 1: Températures ---
-axes[0].plot(x_array, T_ob_array, label='T_ob (°C)')
-axes[0].plot(x_array, T_iob_array, label='T_iob (°C)')
-axes[0].plot(x_array, contr_condens_array, label='contr condens', color='black', linestyle='--')
-axes[0].axhline(y=res['t_p'].to('degC').magnitude, color='r', linestyle='--', label='T condensation (°C)')
-axes[0].axhline(y=0, color='purple', linestyle='--', label='0 °C')
-axes[0].axvline(x=L_tot_batiment.to('m').magnitude, color='g', linestyle='--', label='Extérieur')
-axes[0].set_ylabel('Température (°C)')
-axes[0].set_title('Profil de température')
-axes[0].legend()
-axes[0].grid()
-axes[0].set_yticks(range(-10, 301, 10))
-
-# --- Plot 2: Vitesse fumées ---
-axes[1].plot(x_array, w_m_array, label='w_m (m/s)', color='orange')
-axes[1].set_ylabel('Vitesse (m/s)')
-axes[1].set_title('Vitesse des fumées')
-axes[1].legend()
-axes[1].grid()
-
-# --- Plot 3: Reynolds ---
-axes[2].plot(x_array, Re_array, label='Re', color='brown')
-axes[2].set_ylabel('Re')
-axes[2].set_title('Nombre de Reynolds')
-axes[2].legend()
-axes[2].grid()
-
-# --- Plot 4: Débit massique ---
-axes[3].plot(x_array, m_dot_array, label='m_dot (kg/s)', color='blue')
-axes[3].set_xlabel('Longueur cumulée (m)')
-axes[3].set_ylabel('Débit massique (kg/s)')
-axes[3].set_title('Débit massique des fumées')
-axes[3].legend()
-axes[3].grid()
-
-# Ajuster l’espacement
-plt.tight_layout()
-plt.show()
+    df_si.to_csv('calculs_condensation_maille.csv', index=False, sep=';')
 
 
-# convert the dict to a panda dataframe
-import pandas as pd
-df = pd.DataFrame(all_data)
-# adjust df e façon à utiliser des unités SI using to._base_units()
-df_si = df.applymap(lambda x: x.to_base_units() if hasattr(x, 'to_base_units') else x)
+    print("Done!")
 
-
-
-print("Done!")
+if __name__ == "__main__":
+    main()
