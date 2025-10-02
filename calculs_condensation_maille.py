@@ -205,11 +205,11 @@ def T_ob_j_f(T_ob_prev, K_b_j, q_K_j, m_dot_o_j, m_dot_o_prev, c_po_j, c_po_j_pr
 
     terme_refroidissement = (((m_dot_o_prev * c_po_j_prev) / (m_dot_o_j * c_po_j) - (K_b_j / 2)) * T_ob_prev + K_b_j * T_u_j) / denominator
 
-    contr_condensation = (q_K_j / (m_dot_o_j * c_po_j) / denominator).to('kelvin')
+    contr_condens= (q_K_j / (m_dot_o_j * c_po_j) / denominator).to('delta_degC')
 
-    val = terme_refroidissement + contr_condensation
+    val = terme_refroidissement + contr_condens
 
-    return val.to(ureg.kelvin)
+    return val.to(ureg.kelvin), contr_condens
 
 def Re_f(w_m, D_h, rho_m, eta_A):
     r"""
@@ -436,6 +436,7 @@ def solve_conduit_helper_sans_condensation(T_m, T_in, T_u, T_uo, L, m_dot, D_h, 
         'k_btot_j': k_b,
         'L': L,
         'T_u': T_u,
+        'contr_condens': 0 * ureg.delta_degC,
         }
 
     return res
@@ -606,6 +607,9 @@ def solve_conduit_helper_avec_condensation(T_iob, T_ob, T_in, T_u, T_uo, L, m_do
         T_pe_1 = t_p
         # l_c_j doit être entre 0 et 1. Un crop assure que la condition soit respectée pendant les itérations
         l_c_j = max(0.1, min(1, (T_pe_1.to('degC').magnitude - T_iob.to('degC').magnitude) / (T_iob_j_prev.to('degC').magnitude - T_iob.to('degC').magnitude)))
+        # L'introduction de l_c_j introduit des instabilités dans la convergence, on prend une valeur
+        # de 0.5, ce qui implique un erreur maxi de 15 cm sur la longueur de la condensation, ce qui est négligeéble sur 7 m de cheminée
+        l_c_j = 0.5
 
     # Coefficient de transfert thermique par condensation
     alpha_ioK_j = q_K_j / (l_c_j * (T_ob - T_iob) * U * L)
@@ -633,7 +637,7 @@ def solve_conduit_helper_avec_condensation(T_iob, T_ob, T_in, T_u, T_uo, L, m_do
     K_b = (U * k_btot_j * L) / (m_dot_o_j * c_po_j)
     K_b = K_b.to('dimensionless')
 
-    T_ob_j = T_ob_j_f(T_ob_prev=data_j_prev['T_ob'], K_b_j=K_b, q_K_j=q_K_j, m_dot_o_j=m_dot_o_j, m_dot_o_prev=data_j_prev['m_dot_o_j'], c_po_j=c_po_j, c_po_j_prev=data_j_prev['c_po_j'], T_u_j=T_u)
+    T_ob_j, contr_condens = T_ob_j_f(T_ob_prev=data_j_prev['T_ob'], K_b_j=K_b, q_K_j=q_K_j, m_dot_o_j=m_dot_o_j, m_dot_o_prev=data_j_prev['m_dot_o_j'], c_po_j=c_po_j, c_po_j_prev=data_j_prev['c_po_j'], T_u_j=T_u)
     T_ob = T_ob_j
 
     T_m_prev = T_m
@@ -697,6 +701,7 @@ def solve_conduit_helper_avec_condensation(T_iob, T_ob, T_in, T_u, T_uo, L, m_do
         'q_A': q_A,
         'q_C': q_C,
         'T_u': T_u,
+        'contr_condens': contr_condens,
     }
 
     return res
@@ -814,6 +819,81 @@ def solve_conduit(T_in, T_u, T_uo, L, m_dot, D_h, Res_therm, alpha_a, avec_conde
     return res
 
 
+
+
+
+def solve_conduit_old(T_in, T_u, T_uo, L, m_dot, D_h, Res_therm, alpha_a, avec_condensation=False, T_e=None, data_j_prev=None):
+
+    if T_e is None:
+        T_e = T_in
+
+    #################################Ss
+    # VALEUR PROVISOIRS CALCULS
+    ##################################
+
+    # Température moyenne des fumées
+    T_m = Q_(223, 'degC')
+    T_m_prev = Q_(99999999, 'degC')
+
+
+    # Commence le calcul sans condensation
+
+    while (abs(T_m.to('kelvin').magnitude - T_m_prev.to('kelvin').magnitude) > 1):
+
+        res = solve_conduit_helper_sans_condensation(T_m=T_m, T_in=T_in, T_u=T_u, T_uo=T_uo, L=L, m_dot=m_dot, D_h=D_h, Res_therm=Res_therm, alpha_a=alpha_a, T_e=T_e, data_j_prev=data_j_prev)
+        T_m_prev = T_m
+        T_m = res['T_m']
+
+    print("Calculs sans condensation terminés.")
+    if res['condensation'] and avec_condensation:
+        print("Le conduit est en condensation, recalcul avec condensation...")
+        # Recommence le calcul avec condensation
+        T_ob_min = T_uo.to('kelvin').magnitude
+        T_ob_max = res['T_ob'] + Q_(0.1, 'delta_degC')
+        T_ob_max = T_ob_max.to('kelvin').magnitude
+
+        delta_T_iob_min = 1
+        delta_T_iob_max = T_ob_max - T_uo.to('kelvin').magnitude
+
+        def f_to_solve(T_ob, delta_T_iob):
+            T_iob = Q_(T_ob - delta_T_iob, 'kelvin')
+            T_ob_K = Q_(T_ob, 'kelvin')
+            res = solve_conduit_helper_avec_condensation(T_iob=T_iob, T_ob=T_ob_K, T_in=T_in, T_u=T_u, T_uo=T_uo, L=L, m_dot=m_dot, D_h=D_h, Res_therm=Res_therm, alpha_a=alpha_a, T_e=T_e, data_j_prev=data_j_prev)
+            T_ob_new = res['T_ob'].to('kelvin').magnitude
+            delta_T_iob_new = T_ob_new - res['T_iob'].to('kelvin').magnitude
+            r_ob = (T_ob_new - T_ob)
+            r_delta_T_iob = (delta_T_iob_new - delta_T_iob)
+            return r_ob, r_delta_T_iob
+
+        from scipy.optimize import root
+
+        sol = root(lambda x: f_to_solve(x[0], x[1]), [(T_ob_min + T_ob_max) / 2.0, (delta_T_iob_min + delta_T_iob_max) / 2.0], method='hybr')
+        if sol.success:
+            T_ob_sol, delta_T_iob_sol = sol.x
+            T_iob_sol = T_ob_sol - delta_T_iob_sol
+            T_iob_K = Q_(T_iob_sol, 'kelvin')
+            T_ob_K = Q_(T_ob_sol, 'kelvin')
+            res = solve_conduit_helper_avec_condensation(T_iob=T_iob_K, T_ob=T_ob_K, T_in=T_in, T_u=T_u, T_uo=T_uo, L=L, m_dot=m_dot, D_h=D_h, Res_therm=Res_therm, alpha_a=alpha_a, T_e=T_e, data_j_prev=data_j_prev)
+
+            q_A = res['q_A']
+            q_C = res['q_C']
+
+            delta_iter_cond = math.fabs(q_A.to('watt').magnitude - q_C.to('watt').magnitude) / q_A.to('watt').magnitude
+            print(f'{delta_iter_cond=}')
+            if delta_iter_cond > 0.2:
+                print("La méthode de résolution n'a pas convergé.")
+                # raise Exception("Critère (169) pg 91 non respecté.")
+        else:
+            raise Exception("La méthode de résolution n'a pas convergé.")
+
+
+    else:
+        print("Le conduit n'est pas en condensation.")
+        return res
+    print("Calculs avec condensation terminés.")
+    return res
+
+
 # Température fumée sortie foyer)
 
 
@@ -890,7 +970,7 @@ L_v = 0.2 * ureg.m
 T_in = T_e
 T_uo = T_u = Q_(15, 'degC') # raccordement dans le batiment
 Res_therm = 0 / (ureg.watt / (ureg.meter ** 2 * ureg.kelvin))
-res_racc = solve_conduit(T_in=T_in, T_u=T_uv, T_uo=T_uo, L=L_v, m_dot=m_dot, D_h=D_h, Res_therm=Res_therm, alpha_a=alpha_a_int)
+res_racc = solve_conduit_old(T_in=T_in, T_u=T_uv, T_uo=T_uo, L=L_v, m_dot=m_dot, D_h=D_h, Res_therm=Res_therm, alpha_a=alpha_a_int)
 print(json.dumps(res_racc, indent=2, default=str))
 
 all_data.append({**res_racc, 'segment': 0, 'L_cum': L_v })
@@ -926,7 +1006,7 @@ for i in range(Nseg):
         print("Le segment est au moins en partie à l'extérieur du bâtiment")
         T_uo = T_u = Q_(-15, 'degC')  # conduit dans le batiment
         # 45 mm de laine de roche → Res_therm ~ 1 (m²K)/W
-        Res_therm = 1 / (ureg.watt / (ureg.meter ** 2 * ureg.kelvin))
+        Res_therm = 0 / (ureg.watt / (ureg.meter ** 2 * ureg.kelvin))
         alpha_a = alpha_a_ext
 
 
@@ -944,6 +1024,7 @@ import matplotlib.pyplot as plt
 x_array = [data['L_cum'].to('m').magnitude for data in all_data]
 T_ob_array = [data['T_ob'].to('degC').magnitude for data in all_data]
 T_iob_array = [data['T_iob'].to('degC').magnitude for data in all_data]
+contr_condens_array = [data['contr_condens'].to('delta_degC').magnitude for data in all_data]
 w_m_array = [data['w_m'].to('m/s').magnitude for data in all_data]
 Re_array = [data['Re'] for data in all_data]
 m_dot_array = [data['m_dot_o_j'].to("kg/s").magnitude for data in all_data]
@@ -954,6 +1035,7 @@ fig, axes = plt.subplots(4, 1, figsize=(10, 18), sharex=True)
 # --- Plot 1: Températures ---
 axes[0].plot(x_array, T_ob_array, label='T_ob (°C)')
 axes[0].plot(x_array, T_iob_array, label='T_iob (°C)')
+axes[0].plot(x_array, contr_condens_array, label='contr condens', color='black', linestyle='--')
 axes[0].axhline(y=res['t_p'].to('degC').magnitude, color='r', linestyle='--', label='T condensation (°C)')
 axes[0].axhline(y=0, color='purple', linestyle='--', label='0 °C')
 axes[0].axvline(x=L_tot_batiment.to('m').magnitude, color='g', linestyle='--', label='Extérieur')
@@ -988,5 +1070,14 @@ axes[3].grid()
 # Ajuster l’espacement
 plt.tight_layout()
 plt.show()
+
+
+# convert the dict to a panda dataframe
+import pandas as pd
+df = pd.DataFrame(all_data)
+# adjust df e façon à utiliser des unités SI using to._base_units()
+df_si = df.applymap(lambda x: x.to_base_units() if hasattr(x, 'to_base_units') else x)
+
+
 
 print("Done!")

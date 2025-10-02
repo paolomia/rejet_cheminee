@@ -2,3 +2,4 @@ jupyter
 pint
 scipy
 matplotlib
+pandas
