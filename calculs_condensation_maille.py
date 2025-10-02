@@ -227,7 +227,7 @@ def Re_f(w_m, D_h, rho_m, eta_A):
 
 
 
-def solve_conduit_helper_sans_condensation(T_m, T_in, T_u, T_uo, L, m_dot, D_h, Res_therm, alpha_a, T_e=None, data_j_prev=None):
+def solve_conduit_helper_sans_condensation(T_m, T_in, T_u, T_uo, L, m_dot, D_h, Res_therm, alpha_a, T_e=None, data_j_prev=None, L_tot=None):
     # Puissance thermique nominale
     Q_F = 48 * ureg.kW
     # 48 - 195
@@ -242,6 +242,8 @@ def solve_conduit_helper_sans_condensation(T_m, T_in, T_u, T_uo, L, m_dot, D_h, 
 
     # Coefficient de calcul de la teneur en CO2 des fumées
     sigma_CO2 = sigma_CO2_f(Q_N=Q_N, f_x1=f_x1, f_x2=f_x2, f_x3=f_x3)
+    # mesuration OMIA
+    # sigma_CO2 = 14
     # show_latex(sigma_CO2_f.__doc__)
     # show_value(sigma_CO2)
 
@@ -351,7 +353,7 @@ def solve_conduit_helper_sans_condensation(T_m, T_in, T_u, T_uo, L, m_dot, D_h, 
     # show_value(psi_smooth, 'psi_smooth')
 
     # Nombre de Nusselt
-    Nu = Nu_f(psi=psi, psi_smooth=psi_smooth, Re=Re, Pr=Pr, D_h=D_h, L_tot=L)
+    Nu = Nu_f(psi=psi, psi_smooth=psi_smooth, Re=Re, Pr=Pr, D_h=D_h, L_tot=L_tot)
     # show_value(Nu, 'Nu')
 
     # Coefficient intener de transfert de chaleur par convection
@@ -439,7 +441,7 @@ def solve_conduit_helper_sans_condensation(T_m, T_in, T_u, T_uo, L, m_dot, D_h, 
     return res
 
 
-def solve_conduit_helper_avec_condensation(T_iob, T_ob, T_in, T_u, T_uo, L, m_dot, D_h, Res_therm, alpha_a, T_e=None, data_j_prev=None):
+def solve_conduit_helper_avec_condensation(T_iob, T_ob, T_in, T_u, T_uo, L, m_dot, D_h, Res_therm, alpha_a, T_e=None, data_j_prev=None, L_tot=None):
     T_m = (T_in.to('kelvin') + T_ob.to('kelvin')) / 2.0
     # Puissance thermique nominale
     Q_F = 48 * ureg.kW
@@ -455,6 +457,8 @@ def solve_conduit_helper_avec_condensation(T_iob, T_ob, T_in, T_u, T_uo, L, m_do
 
     # Coefficient de calcul de la teneur en CO2 des fumées
     sigma_CO2 = sigma_CO2_f(Q_N=Q_N, f_x1=f_x1, f_x2=f_x2, f_x3=f_x3)
+    # mesuration OMIA
+    # sigma_CO2 = 14
     # show_latex(sigma_CO2_f.__doc__)
     # show_value(sigma_CO2)
 
@@ -563,7 +567,7 @@ def solve_conduit_helper_avec_condensation(T_iob, T_ob, T_in, T_u, T_uo, L, m_do
     # show_value(psi_smooth, 'psi_smooth')
 
     # Nombre de Nusselt
-    Nu = Nu_f(psi=psi, psi_smooth=psi_smooth, Re=Re, Pr=Pr, D_h=D_h, L_tot=L)
+    Nu = Nu_f(psi=psi, psi_smooth=psi_smooth, Re=Re, Pr=Pr, D_h=D_h, L_tot=L_tot)
     # show_value(Nu, 'Nu')
 
     # Coefficient intener de transfert de chaleur par convection
@@ -700,7 +704,7 @@ def solve_conduit_helper_avec_condensation(T_iob, T_ob, T_in, T_u, T_uo, L, m_do
 
 
 
-def solve_conduit(T_in, T_u, T_uo, L, m_dot, D_h, Res_therm, alpha_a, avec_condensation=False, T_e=None, data_j_prev=None):
+def solve_conduit(T_in, T_u, T_uo, L, m_dot, D_h, Res_therm, alpha_a, avec_condensation=False, T_e=None, data_j_prev=None, L_tot=None):
 
     if T_e is None:
         T_e = T_in
@@ -718,7 +722,7 @@ def solve_conduit(T_in, T_u, T_uo, L, m_dot, D_h, Res_therm, alpha_a, avec_conde
         # Commence le calcul sans condensation
         while (abs(T_m.to('kelvin').magnitude - T_m_prev.to('kelvin').magnitude) > 1):
 
-            res = solve_conduit_helper_sans_condensation(T_m=T_m, T_in=T_in, T_u=T_u, T_uo=T_uo, L=L, m_dot=m_dot, D_h=D_h, Res_therm=Res_therm, alpha_a=alpha_a, T_e=T_e, data_j_prev=data_j_prev)
+            res = solve_conduit_helper_sans_condensation(T_m=T_m, T_in=T_in, T_u=T_u, T_uo=T_uo, L=L, m_dot=m_dot, D_h=D_h, Res_therm=Res_therm, alpha_a=alpha_a, T_e=T_e, data_j_prev=data_j_prev, L_tot=L_tot)
             T_m_prev = T_m
             T_m = res['T_m']
 
@@ -756,7 +760,7 @@ def solve_conduit(T_in, T_u, T_uo, L, m_dot, D_h, Res_therm, alpha_a, avec_conde
             T_iob = T_ob * ratio_T_iob + T_uo.to('kelvin').magnitude * (1 - ratio_T_iob)
             T_iob_K = Q_(T_iob, 'kelvin')
             T_ob_K = Q_(T_ob, 'kelvin')
-            res = solve_conduit_helper_avec_condensation(T_iob=T_iob_K, T_ob=T_ob_K, T_in=T_in, T_u=T_u, T_uo=T_uo, L=L, m_dot=m_dot, D_h=D_h, Res_therm=Res_therm, alpha_a=alpha_a, T_e=T_e, data_j_prev=data_j_prev)
+            res = solve_conduit_helper_avec_condensation(T_iob=T_iob_K, T_ob=T_ob_K, T_in=T_in, T_u=T_u, T_uo=T_uo, L=L, m_dot=m_dot, D_h=D_h, Res_therm=Res_therm, alpha_a=alpha_a, T_e=T_e, data_j_prev=data_j_prev, L_tot=L_tot)
             T_ob_new = res['T_ob'].to('kelvin').magnitude
             ratio_T_iob_new = (res['T_iob'] - T_uo).to('kelvin').magnitude / (res['T_ob'] - T_uo).to('kelvin').magnitude
             rel_err = math.fabs((T_ob_new - T_ob) / (T_ob - T_uo.to('kelvin').magnitude)) + math.fabs(ratio_T_iob_new - ratio_T_iob)
@@ -808,7 +812,7 @@ def solve_conduit(T_in, T_u, T_uo, L, m_dot, D_h, Res_therm, alpha_a, avec_conde
     return res
 
 
-def solve_conduit_old(T_in, T_u, T_uo, L, m_dot, D_h, Res_therm, alpha_a, avec_condensation=False, T_e=None, data_j_prev=None):
+def solve_conduit_old(T_in, T_u, T_uo, L, m_dot, D_h, Res_therm, alpha_a, avec_condensation=False, T_e=None, data_j_prev=None, L_tot=None):
 
     if T_e is None:
         T_e = T_in
@@ -826,7 +830,7 @@ def solve_conduit_old(T_in, T_u, T_uo, L, m_dot, D_h, Res_therm, alpha_a, avec_c
 
     while (abs(T_m.to('kelvin').magnitude - T_m_prev.to('kelvin').magnitude) > 1):
 
-        res = solve_conduit_helper_sans_condensation(T_m=T_m, T_in=T_in, T_u=T_u, T_uo=T_uo, L=L, m_dot=m_dot, D_h=D_h, Res_therm=Res_therm, alpha_a=alpha_a, T_e=T_e, data_j_prev=data_j_prev)
+        res = solve_conduit_helper_sans_condensation(T_m=T_m, T_in=T_in, T_u=T_u, T_uo=T_uo, L=L, m_dot=m_dot, D_h=D_h, Res_therm=Res_therm, alpha_a=alpha_a, T_e=T_e, data_j_prev=data_j_prev, L_tot=L_tot)
         T_m_prev = T_m
         T_m = res['T_m']
 
@@ -844,7 +848,7 @@ def solve_conduit_old(T_in, T_u, T_uo, L, m_dot, D_h, Res_therm, alpha_a, avec_c
         def f_to_solve(T_ob, delta_T_iob):
             T_iob = Q_(T_ob - delta_T_iob, 'kelvin')
             T_ob_K = Q_(T_ob, 'kelvin')
-            res = solve_conduit_helper_avec_condensation(T_iob=T_iob, T_ob=T_ob_K, T_in=T_in, T_u=T_u, T_uo=T_uo, L=L, m_dot=m_dot, D_h=D_h, Res_therm=Res_therm, alpha_a=alpha_a, T_e=T_e, data_j_prev=data_j_prev)
+            res = solve_conduit_helper_avec_condensation(T_iob=T_iob, T_ob=T_ob_K, T_in=T_in, T_u=T_u, T_uo=T_uo, L=L, m_dot=m_dot, D_h=D_h, Res_therm=Res_therm, alpha_a=alpha_a, T_e=T_e, data_j_prev=data_j_prev, L_tot=L_tot)
             T_ob_new = res['T_ob'].to('kelvin').magnitude
             delta_T_iob_new = T_ob_new - res['T_iob'].to('kelvin').magnitude
             r_ob = (T_ob_new - T_ob)
@@ -859,7 +863,7 @@ def solve_conduit_old(T_in, T_u, T_uo, L, m_dot, D_h, Res_therm, alpha_a, avec_c
             T_iob_sol = T_ob_sol - delta_T_iob_sol
             T_iob_K = Q_(T_iob_sol, 'kelvin')
             T_ob_K = Q_(T_ob_sol, 'kelvin')
-            res = solve_conduit_helper_avec_condensation(T_iob=T_iob_K, T_ob=T_ob_K, T_in=T_in, T_u=T_u, T_uo=T_uo, L=L, m_dot=m_dot, D_h=D_h, Res_therm=Res_therm, alpha_a=alpha_a, T_e=T_e, data_j_prev=data_j_prev)
+            res = solve_conduit_helper_avec_condensation(T_iob=T_iob_K, T_ob=T_ob_K, T_in=T_in, T_u=T_u, T_uo=T_uo, L=L, m_dot=m_dot, D_h=D_h, Res_therm=Res_therm, alpha_a=alpha_a, T_e=T_e, data_j_prev=data_j_prev, L_tot=L_tot)
 
             q_A = res['q_A']
             q_C = res['q_C']
@@ -935,7 +939,7 @@ def main():
     # Diamètre cheminée/appareil à combustion
     D_h = 200 * ureg.mm
     # Débit massique (fourni)
-    m_dot = 0.009 * ureg.kg / ureg.s  # kg/s
+    m_dot = 0.0095 * ureg.kg / ureg.s  # kg/s
     # Pg 20
     # la valeur doit être connue, ou en alternative il faut prendre les resultats des formules de l'annexe B
     T_e = Q_(300, 'degC')
@@ -950,7 +954,7 @@ def main():
     T_in = T_e
     T_uo = T_u = Q_(15, 'degC') # raccordement dans le batiment
     Res_therm = 0 / (ureg.watt / (ureg.meter ** 2 * ureg.kelvin))
-    res_racc = solve_conduit_old(T_in=T_in, T_u=T_uv, T_uo=T_uo, L=L_v, m_dot=m_dot, D_h=D_h, Res_therm=Res_therm, alpha_a=alpha_a_int)
+    res_racc = solve_conduit_old(T_in=T_in, T_u=T_u, T_uo=T_uo, L=L_v, m_dot=m_dot, D_h=D_h, Res_therm=Res_therm, alpha_a=alpha_a_int, L_tot=L_v, avec_condensation=True, data_j_prev=None, T_e=T_e)
     print(json.dumps(res_racc, indent=2, default=str))
 
     all_data.append({**res_racc, 'segment': 0, 'L_cum': L_v })
@@ -990,7 +994,7 @@ def main():
             alpha_a = alpha_a_ext
 
 
-        res = solve_conduit_old(T_in=T_in, T_u=T_u, T_uo=T_uo, L=L, m_dot=m_dot, D_h=D_h, Res_therm=Res_therm, alpha_a=alpha_a, avec_condensation=True, data_j_prev=res if i > 0 else None)
+        res = solve_conduit_old(T_in=T_in, T_u=T_u, T_uo=T_uo, L=L, m_dot=m_dot, D_h=D_h, Res_therm=Res_therm, alpha_a=alpha_a, avec_condensation=True, data_j_prev=res if i > 0 else None, L_tot=L_tot)
         all_data.append({**res, 'segment': i+1, 'L_cum': L_cum})
         T_in = res['T_ob']
         print(json.dumps(res, indent=2, default=str))

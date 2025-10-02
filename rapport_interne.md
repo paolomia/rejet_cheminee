@@ -21,6 +21,12 @@ Les conduits sont en tôle métallique non isolé, 1 mm d'épaisseur. Le conduit
 Un volet de régulation est installé dans le conduit de fumée.
 
 L'adresse de l'installation est Havighorster Weg 8C, 21031 Hamburg, Germania. Le site est situé à plus de 20 km de la mer et à une altitude de 41 m au-dessus du niveau de la mer.
+Les températures minime des dernières années sont les suivantes :
+2025 	-9.9 °C
+2024 	-9.1 °C
+2023 	-8.5 °C
+2022 	-9.1 °C
+2021 	-14.4 °C
 
 D'après tests interns, nous pouvons estimer un débit massique pour la fumée d'environs 0.009 kg/s et une température de fumée à la sortie du foyer de 300 °C.
 
