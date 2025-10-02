@@ -106,6 +106,7 @@ def Nu_f(psi, psi_smooth, Re, Pr, D_h, L_tot):
          \cdot 0.0214 \cdot \left(Re^{0.8} - 100\right) \cdot Pr^{0.4}
          \cdot \left[1 + \left(\frac{D_h}{L_{tot}}\right)^{0.67}\right]
     """
+
     res = ((psi / psi_smooth) ** 0.67 * 0.0214 * (Re ** 0.8 - 100) * (Pr ** 0.4) * (1 + (D_h / L_tot) ** 0.67))
     # Ensure dimensionless result
     return res.magnitude
@@ -210,6 +211,18 @@ def T_ob_j_f(T_ob_prev, K_b_j, q_K_j, m_dot_o_j, m_dot_o_prev, c_po_j, c_po_j_pr
 
     return val.to(ureg.kelvin)
 
+def Re_f(w_m, D_h, rho_m, eta_A):
+    r"""
+    Re = \frac{w_m \cdot D_h}{\eta_A}
+    \quad\text{avec } w_m \text{ en m/s, } D_h \text{ en m, } \eta_A \text{ en Pa·s}
+    """
+    if w_m < 0.5 * ureg.m / ureg.s:
+        # pg. 31 "Pour une vitesse moyenne des fumées w_m < 0.5 m/s, prendre un nombre de Nusselt approprrié à w_m = 0.5 m/s."
+        w_m = 0.5 * ureg.m / ureg.s
+    Re = (w_m * D_h * rho_m) / eta_A
+    Re = Re.to('dimensionless')
+    return max(Re.magnitude, 2300)  # minimum 2300
+
 
 
 def solve_conduit_helper_sans_condensation(T_m, T_in, T_u, T_uo, L, m_dot, D_h, Res_therm, alpha_a, T_e=None, data_j_prev=None):
@@ -305,8 +318,7 @@ def solve_conduit_helper_sans_condensation(T_m, T_in, T_u, T_uo, L, m_dot, D_h, 
     # show_value(w_m.to('m/s'))
 
     # Nombre de Reynolds
-    # Cette formule est équivalente à Re = (rho_m * w_m * D_h) / eta_A
-    Re = (m_dot * D_h) / (A * eta_A)
+    Re = Re_f(w_m=w_m, D_h=D_h, rho_m=rho_m, eta_A=eta_A)
     # si < 2300 alors Re = 2300
     Re = max(Re, 2300)
     # show_value(Re, 'Re')
@@ -387,6 +399,7 @@ def solve_conduit_helper_sans_condensation(T_m, T_in, T_u, T_uo, L, m_dot, D_h, 
     condensation = T_iob.to('degC') < t_p.to('degC')
 
     res = {
+        'type_calcul': 'segment_sans_condensation',
         'A': A,
         'A_v': A_v,
         'A_t': A_t,
@@ -422,6 +435,7 @@ def solve_conduit_helper_sans_condensation(T_m, T_in, T_u, T_uo, L, m_dot, D_h, 
         'c_po_j': c_p,
         'k_btot_j': k_b,
         'L': L,
+        'T_u': T_u,
         }
 
     return res
@@ -516,15 +530,13 @@ def solve_conduit_helper_avec_condensation(T_iob, T_ob, T_in, T_u, T_uo, L, m_do
     rho_m = p_L / (R * T_m.to('kelvin'))
     # show_value(rho_m.to('kg/m^3'))
 
-    # Vitesse moyenne des fumées
-    w_m = m_dot / (rho_m * A)
+    # Vitesse moyenne des fumées, il faut utiliser le nouveau debit massique apres condensation
+    w_m = data_j_prev['m_dot_o_j'] / (rho_m * A)
     # show_value(w_m.to('m/s'))
 
     # Nombre de Reynolds
-    # Cette formule est équivalente à Re = (rho_m * w_m * D_h) / eta_A
-    Re = (m_dot * D_h) / (A * eta_A)
-    # si < 2300 alors Re = 2300
-    Re = max(Re, 2300)
+    Re = Re_f(w_m=w_m, D_h=D_h, rho_m=rho_m, eta_A=eta_A)
+
     # show_value(Re, 'Re')
 
     f_c0 = 23  # 23.5
@@ -565,27 +577,8 @@ def solve_conduit_helper_avec_condensation(T_iob, T_ob, T_in, T_u, T_uo, L, m_do
     alpha_i = alpha_i.to_base_units()
     # show_value(alpha_i, 'alpha_i')
 
-    # Coefficient de transfert thermique température NON équilibrée
-    k = 1 / (1 / alpha_i + 0.5 * (Res_therm + 1 / alpha_a))
-    # show_value(k, 'k')
-
-    # Coefficient de transfert thermique température équilibrée
-    k_b = 1 / (1 / alpha_i + Res_therm + 1 / alpha_a)
-    # show_value(k_b, 'k_b')
-
-    # Coefficient de refroidissement température NON équilibrée
-    K = (k * U * L) / (m_dot * c_p)
-    # check K is dimensionless
-    K = K.to('dimensionless')
-    # show_value(K, 'K')
-
     p_Do_j = p_Do_j_f(T_iob_j=T_iob)
 
-    # Calcul point de rosée
-    condensation = T_iob.to('degC') < t_p.to('degC')
-
-
-    print("Calculs condensation en cours...")
     f_K = f_K_f(T_e=T_e)
     # show_value(f_K, 'f_K')
 
@@ -602,7 +595,7 @@ def solve_conduit_helper_avec_condensation(T_iob, T_ob, T_in, T_u, T_uo, L, m_do
 
     # l_c_j est lavProportion de surface de condensation dans le segment j
     # TODO: fix below: something is wrong with the logic
-    is_first_condensing_segment = not (data_j_prev and data_j_prev.get('condensation', False))
+    is_first_condensing_segment = (data_j_prev['type_calcul'] != 'segment_avec_condensation')
     if not is_first_condensing_segment:
         # Ce n'est pas le premier segment avec condensation
         l_c_j = 1
@@ -629,7 +622,7 @@ def solve_conduit_helper_avec_condensation(T_iob, T_ob, T_in, T_u, T_uo, L, m_do
     ## AJOUTER ICI !!!!
 
     if is_first_condensing_segment:
-        k_b_prev = data_j_prev['k_b'] if data_j_prev else k_b
+        k_b_prev = data_j_prev['k_b']
         k_btot_j = (1 - l_c_j) * k_b_prev + l_c_j * k_obtot_j
     else:
         k_btot_prev = data_j_prev['k_btot_j']
@@ -651,12 +644,14 @@ def solve_conduit_helper_avec_condensation(T_iob, T_ob, T_in, T_u, T_uo, L, m_do
     # Nous sommes dans un segment avec condensation, donc T_iob < t_p
     T_iob = min(T_iob, t_p - Q_(0.1, 'delta_degC')).to('kelvin')
 
+    # Calcul point de rosée
+    condensation = T_iob.to('degC') < t_p.to('degC')
+
     q_A = data_j_prev['m_dot_o_j'] * data_j_prev['c_po_j'] * data_j_prev['T_ob'] - m_dot_o_j * c_po_j * T_ob_j + q_K_j
     q_C = alpha_iotot_j * U * L * (data_j_prev['T_ob'] - data_j_prev['T_iob'] + T_ob_j - T_iob) / 2
 
-
-
     res = {
+        'type_calcul': 'segment_avec_condensation',
         'A': A,
         'A_v': A_v,
         'A_t': A_t,
@@ -667,6 +662,7 @@ def solve_conduit_helper_avec_condensation(T_iob, T_ob, T_in, T_u, T_uo, L, m_do
         'T_m': T_m,
         'eta_A': eta_A,
         'lambda_A': lambda_A,
+        'm_dot': m_dot,
         'R': R,
         'rho_m': rho_m,
         'w_m': w_m.to('m/s'),
@@ -679,37 +675,29 @@ def solve_conduit_helper_avec_condensation(T_iob, T_ob, T_in, T_u, T_uo, L, m_do
         'alpha_i': alpha_i,
         'alpha_a': alpha_a,
         'Res_therm': Res_therm,
-        'k': k,
-        'k_b': k_b,
-        'K': K,
         'K_b': K_b,
         'T_ob': T_ob,
         'T_iob': T_iob,
         't_p': t_p,
         'condensation': condensation,
         'p_Do_j': p_Do_j,
-        'm_dot_o_j': m_dot,
-        'c_po_j': c_p,
-        'k_btot_j': k_b,
         'L': L,
-        }
-
-    res.update({
-            'f_K': f_K,
-            'delta_m_D_j': delta_m_D_j,
-            'q_K_j': q_K_j,
-            'l_c_j': l_c_j,
-            'alpha_ioK_j': alpha_ioK_j,
-            'alpha_iotot_j': alpha_iotot_j,
-            'k_obtot_j': k_obtot_j,
-            'm_dot_o_j': m_dot_o_j,
-            'k_btot_j': k_btot_j,
-            'c_po_j': c_po_j,
-            'T_ob_j': T_ob_j,
-            'T_iob_j': T_iob,
-            'q_A': q_A,
-            'q_C': q_C,
-            })
+        'f_K': f_K,
+        'delta_m_D_j': delta_m_D_j,
+        'q_K_j': q_K_j,
+        'l_c_j': l_c_j,
+        'alpha_ioK_j': alpha_ioK_j,
+        'alpha_iotot_j': alpha_iotot_j,
+        'k_obtot_j': k_obtot_j,
+        'm_dot_o_j': m_dot_o_j,
+        'k_btot_j': k_btot_j,
+        'c_po_j': c_po_j,
+        'T_ob_j': T_ob_j,
+        'T_iob_j': T_iob,
+        'q_A': q_A,
+        'q_C': q_C,
+        'T_u': T_u,
+    }
 
     return res
 
@@ -731,42 +719,78 @@ def solve_conduit(T_in, T_u, T_uo, L, m_dot, D_h, Res_therm, alpha_a, avec_conde
     T_m = Q_(223, 'degC')
     T_m_prev = Q_(99999999, 'degC')
 
+    # Si il y avait de la condensation dans le segment précedent, on passe directement au calcul avec condensation
+    if not data_j_prev or data_j_prev['type_calcul'] != 'segment_avec_condensation':
+        # Commence le calcul sans condensation
+        while (abs(T_m.to('kelvin').magnitude - T_m_prev.to('kelvin').magnitude) > 1):
 
-    # Commence le calcul sans condensation
+            res = solve_conduit_helper_sans_condensation(T_m=T_m, T_in=T_in, T_u=T_u, T_uo=T_uo, L=L, m_dot=m_dot, D_h=D_h, Res_therm=Res_therm, alpha_a=alpha_a, T_e=T_e, data_j_prev=data_j_prev)
+            T_m_prev = T_m
+            T_m = res['T_m']
 
-    while (abs(T_m.to('kelvin').magnitude - T_m_prev.to('kelvin').magnitude) > 1):
+        print("Calculs sans condensation terminés.")
+        do_calcule_condensation = res['condensation']
+        if do_calcule_condensation:
+            print("Le segment précédent est sans condensation, mais le critère de condensation est maintenant respecté, on passe au calcul avec condensation.")
+    else:
+        do_calcule_condensation = True
+        print("Le segment précédent est avec condensation, on passe directement au calcul avec condensation.")
+        # On prend les données du segment précédent pour initialiser le calcul avec condensation
+        res = data_j_prev
 
-        res = solve_conduit_helper_sans_condensation(T_m=T_m, T_in=T_in, T_u=T_u, T_uo=T_uo, L=L, m_dot=m_dot, D_h=D_h, Res_therm=Res_therm, alpha_a=alpha_a, T_e=T_e, data_j_prev=data_j_prev)
-        T_m_prev = T_m
-        T_m = res['T_m']
-
-    print("Calculs sans condensation terminés.")
-    if res['condensation'] and avec_condensation:
-        print("Le conduit est en condensation, recalcul avec condensation...")
+    if do_calcule_condensation:
+        # check data_j_prev is not null
+        assert data_j_prev is not None, "data_j_prev ne peut pas être None si on calcule avec condensation."
+        print("Calculs avec condensation en cours...")
         # Recommence le calcul avec condensation
         T_ob_min = T_uo.to('kelvin').magnitude
-        T_ob_max = res['T_ob'] + Q_(0.1, 'delta_degC')
+        T_ob_max = data_j_prev['T_ob'] + Q_(0.1, 'delta_degC')
         T_ob_max = T_ob_max.to('kelvin').magnitude
 
-        delta_T_iob_min = 1
-        delta_T_iob_max = T_ob_max - T_uo.to('kelvin').magnitude
+        ratio_T_iob_min = 0.001
+        ratio_T_iob_max = 0.999
 
-        def f_to_solve(T_ob, delta_T_iob):
-            T_iob = Q_(T_ob - delta_T_iob, 'kelvin')
+        prev_T_ob = data_j_prev['T_ob'].to('kelvin').magnitude
+        prev_ratio_T_iob = (prev_T_ob - data_j_prev['T_iob'].to('kelvin').magnitude) / (prev_T_ob - T_uo.to('kelvin').magnitude)
+
+        class EarlyStop(Exception):
+            pass
+        eps = 1e-4
+
+        def f_to_solve(vals):
+            T_ob, ratio_T_iob = vals
+            T_iob = T_ob * ratio_T_iob + T_uo.to('kelvin').magnitude * (1 - ratio_T_iob)
+            T_iob_K = Q_(T_iob, 'kelvin')
             T_ob_K = Q_(T_ob, 'kelvin')
-            res = solve_conduit_helper_avec_condensation(T_iob=T_iob, T_ob=T_ob_K, T_in=T_in, T_u=T_u, T_uo=T_uo, L=L, m_dot=m_dot, D_h=D_h, Res_therm=Res_therm, alpha_a=alpha_a, T_e=T_e, data_j_prev=data_j_prev)
+            res = solve_conduit_helper_avec_condensation(T_iob=T_iob_K, T_ob=T_ob_K, T_in=T_in, T_u=T_u, T_uo=T_uo, L=L, m_dot=m_dot, D_h=D_h, Res_therm=Res_therm, alpha_a=alpha_a, T_e=T_e, data_j_prev=data_j_prev)
             T_ob_new = res['T_ob'].to('kelvin').magnitude
-            delta_T_iob_new = T_ob_new - res['T_iob'].to('kelvin').magnitude
-            r_ob = (T_ob_new - T_ob)
-            r_delta_T_iob = (delta_T_iob_new - delta_T_iob)
-            return r_ob, r_delta_T_iob
+            ratio_T_iob_new = (res['T_iob'] - T_uo).to('kelvin').magnitude / (res['T_ob'] - T_uo).to('kelvin').magnitude
+            rel_err = math.fabs((T_ob_new - T_ob) / (T_ob - T_uo.to('kelvin').magnitude)) + math.fabs(ratio_T_iob_new - ratio_T_iob)
+            if rel_err < eps:
+                raise EarlyStop((rel_err, (T_ob, ratio_T_iob)))
+            return rel_err
 
         from scipy.optimize import root
 
-        sol = root(lambda x: f_to_solve(x[0], x[1]), [(T_ob_min + T_ob_max) / 2.0, (delta_T_iob_min + delta_T_iob_max) / 2.0], method='hybr')
-        if sol.success:
-            T_ob_sol, delta_T_iob_sol = sol.x
-            T_iob_sol = T_ob_sol - delta_T_iob_sol
+        # sol = root(lambda x: f_to_solve(x[0], x[1]), x0=[(T_ob_min + T_ob_max) / 2, (ratio_T_iob_min + ratio_T_iob_max) / 2], method='hybr')
+        from scipy.optimize import minimize
+        bounds = [(T_ob_min, T_ob_max), (ratio_T_iob_min, ratio_T_iob_max)]
+
+        try:
+            sol = minimize(f_to_solve, x0=[prev_T_ob, prev_ratio_T_iob], bounds=bounds, method='Powell', options={'ftol': 1e-6, 'disp': False, 'maxiter': 400})
+            # If we get here, early-stop was not triggered
+            f_min, x_min = sol.fun, sol.x
+            success = (f_min < 2e-2)
+        except EarlyStop as e:
+            f_min, x_min = e.args[0]
+            success = True  # because we stopped exactly when f<eps
+
+        if not success:
+            raise Exception("La méthode de résolution n'a pas convergé.")
+
+        if success:
+            T_ob_sol, ratio_T_iob_sol = x_min
+            T_iob_sol = T_ob_sol * ratio_T_iob_sol + T_uo.to('kelvin').magnitude * (1 - ratio_T_iob_sol)
             T_iob_K = Q_(T_iob_sol, 'kelvin')
             T_ob_K = Q_(T_ob_sol, 'kelvin')
             res = solve_conduit_helper_avec_condensation(T_iob=T_iob_K, T_ob=T_ob_K, T_in=T_in, T_u=T_u, T_uo=T_uo, L=L, m_dot=m_dot, D_h=D_h, Res_therm=Res_therm, alpha_a=alpha_a, T_e=T_e, data_j_prev=data_j_prev)
@@ -794,13 +818,7 @@ def solve_conduit(T_in, T_u, T_uo, L, m_dot, D_h, Res_therm, alpha_a, avec_conde
 
 
 
-# Diamètre cheminée/appareil à combustion
-D_h = 200 * ureg.mm
 
-
-
-# Débit massique (fourni)
-m_dot = 0.009 * ureg.kg / ureg.s  # kg/s
 
 
 # Température air ambiant à la sortie du conduit de fumée
@@ -847,14 +865,21 @@ T_ut = Q_(15, 'degC')
 # on va faire 21 × 0.3 m + 4 × 0.3 m
 
 
-# Pg 20
-# la valeur doit être connue, ou en alternative il faut prendre les resultats des formules de l'annexe B
-T_e = Q_(300, 'degC')
+
 
 # Coefficient externe de transfert thermique exterieur
 alpha_a_ext = 25 * ureg.watt / (ureg.meter ** 2 * ureg.kelvin)
 alpha_a_int = 8 * ureg.watt / (ureg.meter ** 2 * ureg.kelvin)
 
+
+# Diamètre cheminée/appareil à combustion
+D_h = 200 * ureg.mm
+# Débit massique (fourni)
+m_dot = 0.009 * ureg.kg / ureg.s  # kg/s
+# Pg 20
+# la valeur doit être connue, ou en alternative il faut prendre les resultats des formules de l'annexe B
+T_e = Q_(300, 'degC')
+all_data = []
 # Calculs circuit de raccordement
 
 # Nombre de segments dans le circuit de raccordement
@@ -868,6 +893,7 @@ Res_therm = 0 / (ureg.watt / (ureg.meter ** 2 * ureg.kelvin))
 res_racc = solve_conduit(T_in=T_in, T_u=T_uv, T_uo=T_uo, L=L_v, m_dot=m_dot, D_h=D_h, Res_therm=Res_therm, alpha_a=alpha_a_int)
 print(json.dumps(res_racc, indent=2, default=str))
 
+all_data.append({**res_racc, 'segment': 0, 'L_cum': L_v })
 # ==============================
 # Calculs conduit de fumée
 # ==============================
@@ -884,7 +910,7 @@ L_cum = 0 * ureg.m
 Nseg = 25
 # Dans le batiment
 T_in = res_racc['T_ob']
-all_data = []
+
 for i in range(Nseg):
     L = L_tot / Nseg
     L_cum += L
@@ -895,62 +921,72 @@ for i in range(Nseg):
         print("Le segment est entièrement à l'intérieur du bâtiment")
         T_uo = T_u = Q_(15, 'degC')  # conduit dans le batiment
         Res_therm = 0 / (ureg.watt / (ureg.meter ** 2 * ureg.kelvin))
+        alpha_a = alpha_a_int
     else:
         print("Le segment est au moins en partie à l'extérieur du bâtiment")
         T_uo = T_u = Q_(-15, 'degC')  # conduit dans le batiment
         # 45 mm de laine de roche → Res_therm ~ 1 (m²K)/W
-        Res_therm = 0 / (ureg.watt / (ureg.meter ** 2 * ureg.kelvin))
+        Res_therm = 1 / (ureg.watt / (ureg.meter ** 2 * ureg.kelvin))
+        alpha_a = alpha_a_ext
 
 
-    res = solve_conduit(T_in=T_in, T_u=T_u, T_uo=T_uo, L=L, m_dot=m_dot, D_h=D_h, Res_therm=Res_therm, alpha_a=alpha_a_int, avec_condensation=True, data_j_prev=res if i > 0 else None)
+    res = solve_conduit(T_in=T_in, T_u=T_u, T_uo=T_uo, L=L, m_dot=m_dot, D_h=D_h, Res_therm=Res_therm, alpha_a=alpha_a, avec_condensation=True, data_j_prev=res if i > 0 else None)
     all_data.append({**res, 'segment': i+1, 'L_cum': L_cum})
     T_in = res['T_ob']
     print(json.dumps(res, indent=2, default=str))
     if res['condensation']:
-        print(f"**Attention**: Condensation détectée dans le segment {i+1}/21 du conduit intérieur du bâtiment")
+        print(f"**Attention**: Condensation détectée dans le segment {i+1}/{Nseg} du conduit")
         NSegK = min(i+1, NSegK)
 
 import matplotlib.pyplot as plt
 
-# Plot temperature profile
+# Préparation des données
+x_array = [data['L_cum'].to('m').magnitude for data in all_data]
 T_ob_array = [data['T_ob'].to('degC').magnitude for data in all_data]
 T_iob_array = [data['T_iob'].to('degC').magnitude for data in all_data]
-x_array = [data['L_cum'].to('m').magnitude for data in all_data]
-# set plot size
-plt.figure(figsize=(6, 10))
-plt.plot(x_array, T_ob_array, label='T_ob (°C)')
-plt.plot(x_array, T_iob_array, label='T_iob (°C)')
-plt.axhline(y=res['t_p'].to('degC').magnitude, color='r', linestyle='--', label='T condensation(°C)')
-plt.axhline(y=0, color='purple', linestyle='--', label='0°C')
-plt.xlabel('Longueur cumulée (m)')
-plt.ylabel('Température (°C)')
-plt.title('Profil de température dans le conduit de fumée')
-# add a vertical line pour l'exterieur
-plt.axvline(x=L_tot_batiment.to('m').magnitude, color='g', linestyle='--', label='Extérieur')
-plt.legend()
-plt.grid()
-plt.yticks(range(-10, 301, 10))
-plt.show()
-
-# plot vitesse fumée
-plt.figure(figsize=(6, 10))
 w_m_array = [data['w_m'].to('m/s').magnitude for data in all_data]
-plt.plot(x_array, w_m_array, label='w_m (m/s)', color='orange')
-plt.xlabel('Longueur cumulée (m)')
-plt.ylabel('Vitesse fumée (m/s)')
-plt.title('Vitesse des fumées dans le conduit de fumée')
-plt.legend()
-plt.grid()
+Re_array = [data['Re'] for data in all_data]
+m_dot_array = [data['m_dot_o_j'].to("kg/s").magnitude for data in all_data]
+
+# Création d'une figure avec 4 sous-graphiques alignés verticalement
+fig, axes = plt.subplots(4, 1, figsize=(10, 18), sharex=True)
+
+# --- Plot 1: Températures ---
+axes[0].plot(x_array, T_ob_array, label='T_ob (°C)')
+axes[0].plot(x_array, T_iob_array, label='T_iob (°C)')
+axes[0].axhline(y=res['t_p'].to('degC').magnitude, color='r', linestyle='--', label='T condensation (°C)')
+axes[0].axhline(y=0, color='purple', linestyle='--', label='0 °C')
+axes[0].axvline(x=L_tot_batiment.to('m').magnitude, color='g', linestyle='--', label='Extérieur')
+axes[0].set_ylabel('Température (°C)')
+axes[0].set_title('Profil de température')
+axes[0].legend()
+axes[0].grid()
+axes[0].set_yticks(range(-10, 301, 10))
+
+# --- Plot 2: Vitesse fumées ---
+axes[1].plot(x_array, w_m_array, label='w_m (m/s)', color='orange')
+axes[1].set_ylabel('Vitesse (m/s)')
+axes[1].set_title('Vitesse des fumées')
+axes[1].legend()
+axes[1].grid()
+
+# --- Plot 3: Reynolds ---
+axes[2].plot(x_array, Re_array, label='Re', color='brown')
+axes[2].set_ylabel('Re')
+axes[2].set_title('Nombre de Reynolds')
+axes[2].legend()
+axes[2].grid()
+
+# --- Plot 4: Débit massique ---
+axes[3].plot(x_array, m_dot_array, label='m_dot (kg/s)', color='blue')
+axes[3].set_xlabel('Longueur cumulée (m)')
+axes[3].set_ylabel('Débit massique (kg/s)')
+axes[3].set_title('Débit massique des fumées')
+axes[3].legend()
+axes[3].grid()
+
+# Ajuster l’espacement
+plt.tight_layout()
 plt.show()
 
-# plot vitesse fumée
-plt.figure(figsize=(6, 10))
-w_m_array = [data['Re'] for data in all_data]
-plt.plot(x_array, w_m_array, label='w_m (m/s)', color='orange')
-plt.xlabel('Longueur cumulée (m)')
-plt.ylabel('Vitesse fumée (m/s)')
-plt.title('Vitesse des fumées dans le conduit de fumée')
-plt.legend()
-plt.grid()
-plt.show()
 print("Done!")
