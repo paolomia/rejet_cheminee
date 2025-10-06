@@ -264,7 +264,7 @@ def solve_conduit_helper(T_m, T_in, T_u, T_uo, L, m_dot, D_h, Res_therm, alpha_a
 
     # 48 - 195
     # Hauteur au dessus du niveau de la mer
-    z = 10 * ureg.m
+    z = 41 * ureg.m
 
     # Coefficient de calcul de la teneur en vapeur d'eau des fumées
     # Annexe B3, valeurs pour gaz et tirage forcé
@@ -785,8 +785,8 @@ def main():
     m_dot = 0.068 * ureg.kg / ureg.s  # kg/s
     # Pg 20
     # la valeur doit être connue, ou en alternative il faut prendre les resultats des formules de l'annexe B
-    T_e = Q_(207, 'degC')
-    # T_e = Q_(310, 'degC')
+    # T_e = Q_(207, 'degC')
+    T_e = Q_(300, 'degC')
     T_L = Q_(-15, 'degC')
     all_data = []
     # Calculs circuit de raccordement

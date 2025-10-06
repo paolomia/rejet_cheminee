@@ -15,6 +15,7 @@ Le système prise en examen comporte :
 - Un conduit de raccordement de 200 mm de long et 200 mm de diamètre avec un angle de 90°
 - un conduit de fumée de longuer 6.3 m et de diamètre 200 mm à l'intérieur du bâtiment
 - un conduit de fumée de longuer 1.2 m et de diamètre 200 mm à l'extérieur du bâtiment
+- L'hauteur totale du conduit de fumée est donc de 7.5 m
 
 Les conduits sont en tôle métallique non isolé, 1 mm d'épaisseur. Le conduit situé à l'intérieur du batimen est dans un environnement chauffé (15 °C).
 
