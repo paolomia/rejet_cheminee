@@ -1,6 +1,10 @@
-from report import *
+from redaction import do_report, do_report_english
 import math
 import json
+from pint import UnitRegistry
+ureg = UnitRegistry()
+Q_ = ureg.Quantity
+
 
 def p_H_f(H, rho_L, rho_m):
     r"""
@@ -139,255 +143,6 @@ def colebrook_psi(Re, r, D_h, tol=1e-6, max_iter=20):
         psi = new_psi
 
     return psi
-
-
-
-def do_report(res: dict, filename: str = "rapport_nf_en_13384.md") -> str:
-    """
-    Build a Markdown+LaTeX report of the conduit calculation and save it to disk.
-    The report includes normative references (EN 13384-1:2015+A1:2019).
-    Returns the path to the written file.
-    """
-    import datetime
-    import math
-
-    # ---------- small helpers ----------
-    def _is_qty(x):
-        return hasattr(x, "to") and hasattr(x, "magnitude")
-
-    def fmt(x, unit=None, digits=3):
-        """
-        Format pint quantities or plain numbers using SI units and up to `digits`
-        significant figures. Uses scientific notation if |value| > 1e4 or 0 < |value| < 1e-3.
-        """
-        import math
-
-        def _is_qty(v):
-            return hasattr(v, "to") and hasattr(v, "magnitude") and hasattr(v, "units")
-
-        def _format_sig(v: float, sig: int = 3) -> str:
-            if not math.isfinite(v):
-                return str(v)
-            if v == 0:
-                return "0"
-            av = abs(v)
-            use_sci = (av > 1e4) or (av < 1e-3)
-            if use_sci:
-                # sci notation: sig digits total -> (sig-1) after decimal
-                return f"{v:.{max(sig - 1, 0)}e}"
-            # fixed notation with sig digits
-            exp10 = math.floor(math.log10(av))
-            decimals = sig - 1 - exp10  # can be negative (round to tens, hundreds, ...)
-            rounded = round(v, decimals)
-            s = f"{rounded:.{max(decimals, 0)}f}"
-            # normalize and strip trailing zeros
-            if s.startswith("-0"):
-                s = s.replace("-0", "0", 1)
-            if "." in s:
-                s = s.rstrip("0").rstrip(".")
-            return s
-
-        def _to_si(q):
-            # If an explicit target unit was requested, try it first.
-            if unit is not None:
-                try:
-                    return q.to(unit)
-                except Exception:
-                    pass  # fall back to SI suggestions
-
-            # Try common SI targets first (then fall back to base SI).
-            si_candidates = [# scalars & basics
-                "1", "K", "m", "m**2", "m**3", "kg", "s", # flows, densities, velocities
-                "kg/s", "kg/m**3", "m/s", "m/s**2", # thermo/fluids
-                "Pa", "W", "J", "N", "W/(m*K)", "W/(m**2*K)", "Pa*s", "J/(kg*K)", "m*K/W", "m**2*K/W", ]
-            for ustr in si_candidates:
-                try:
-                    return q.to(ustr)
-                except Exception:
-                    continue
-            # Last resort: base SI units
-            try:
-                return q.to_base_units()
-            except Exception:
-                return q
-
-        try:
-            if _is_qty(x):
-                q = _to_si(x)
-                val = float(q.magnitude)
-                s = _format_sig(val, digits)
-                # prefer compact SI unit symbols
-                try:
-                    u_str = "{:~}".format(q.units)  # e.g., 'Pa', 'W/(m*K)', 'm'
-                except Exception:
-                    try:
-                        u_str = format(q.units, "~")
-                    except Exception:
-                        u_str = str(q.units)
-                if u_str in ("dimensionless", ""):
-                    return s
-                return f"{s} {u_str}"
-            elif isinstance(x, (int, float)):
-                return _format_sig(float(x), digits)
-            else:
-                return str(x)
-        except Exception:
-            return str(x)
-
-
-    # bring selected inputs if they exist in globals()
-    # (kept light: report is robust even if some are missing)
-    # --- Inputs (names and symbols per EN 13384-1) ---
-    ALIASES = {
-        # Températures principales
-        "$T_L$ (température de l’air extérieur)": "T_L",
-        "$T_e$ (température des fumées à l’orifice d’admission du conduit)": "T_e",
-        "$T_uo$ (température de l’air ambiant à la sortie du conduit de fumée)": "T_uo",
-        "$T_u$ (température de l’air ambiant autour du conduit)": "T_u",
-
-        # Géométrie et débits
-        "$Dh$ (diamètre hydraulique intérieur du conduit)": "D_h",
-        "$L$ (longueur du conduit de fumée)": "L",
-
-        # Propriétés / paramètres
-        "$r$ (rugosité moyenne intérieure)": "r",
-        "$1/Λ$ (résistance thermique du conduit)": "Res_therm",
-
-        # Puissances et coefficients (hors tableau normatif mais nécessaires)
-        "$Q_F$ (puissance thermique nominale)": "Q_F",
-        "$Q_N$ (puissance utile nominale)": "Q_N",
-        "$f_w$ (teneur en vapeur d’eau des fumées)": "f_w",
-        "$f_x1$": "f_x1",
-        "$f_x2$": "f_x2",
-        "$f_x3$": "f_x3",
-        "$\eta$ (rendement)": "eta",
-        }
-    inputs = []
-    for label, var in ALIASES.items():
-        if var in res:
-            inputs.append((label, res[var]))
-
-    # convenience locals from results (if present)
-    Re = res.get("Re")
-    Pr = res.get("Pr")
-    Nu = res.get("Nu")
-    Tiob = res.get("T_iob")
-    Tob = res.get("T_ob")
-    Tm = res.get("T_m")
-
-    # ---------- domain checks per standard ----------
-    checks = []
-    # Nu validity window: 2300 < Re < 1e7 and 0.6 < Pr < 1.5 (EN 13384-1 §5.8.3.2, eq. (24))
-    if Re is not None:
-        try:
-            Re_v = float(Re.to('dimensionless').magnitude) if _is_qty(Re) else float(Re)
-            ok_re = (Re_v >= 2300.0) and (Re_v <= 1.0e7)
-            checks.append(f"- Domaine de validité pour Nu (eq. (24)) — 2.3e3 ≤ Re ≤ 1.0e7 : "
-                          f"{'OK' if ok_re else 'HORS DOMAINE'} (Re = {Re_v:.3g})")
-        except Exception:
-            checks.append("- Domaine Re : impossible d’évaluer.")
-    if Pr is not None:
-        try:
-            Pr_v = float(Pr.to('dimensionless').magnitude) if _is_qty(Pr) else float(Pr)
-            ok_pr = (Pr_v > 0.6) and (Pr_v < 1.5)
-            checks.append(f"- Domaine de validité pour Nu (eq. (24)) — 0.6 < Pr < 1.5 : "
-                          f"{'OK' if ok_pr else 'HORS DOMAINE'} (Pr = {Pr_v:.3g})")
-        except Exception:
-            checks.append("- Domaine Pr : impossible d’évaluer.")
-
-    # ---------- build Markdown ----------
-    md = []
-    md.append("# Rapport de calcul — Conduit de fumée")
-    md.append("")
-    md.append("_Selon NF EN 13384‑1:2015+A1:2019 (méthodes de calcul thermo‑aéraulique, partie 1)_")
-    md.append("")
-    md.append(f"**Date** : {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    md.append("")
-    md.append("## 1. Données d’entrée")
-    if inputs:
-        for k, v in inputs:
-            md.append(f"- **{k}** = {fmt(v)}")
-    else:
-        md.append("_(Aucune donnée d’entrée supplémentaire détectée dans le module.)_")
-
-    md.append("")
-    md.append("## 2. Formules utilisées et références normatives")
-    md.append("")
-    md.append("**Thermo‑aéraulique principale**")
-    md.append("")
-    md.append("- Pression atmosphérique extérieure :")
-    md.append("  $$ p_L = 97000\\,\\exp\\!\\left(\\tfrac{-g\\,z}{R_L\\,T_L}\\right) \\quad\\text{(eq. (12), §5.7.2)} $$")
-    md.append("- Températures le long du conduit (sortie et moyenne) :")
-    md.append("  $$ T_m = T_u + \\frac{T_e - T_u}{K}\\,\\bigl(1-e^{-K}\\bigr) \\quad\\text{(eq. (16), §5.8.1)} $$")
-    md.append("  $$ T_o = T_u + (T_e - T_u)\\,e^{-K} \\quad\\text{(eq. (17), §5.8.1)} $$")
-    md.append("- Coefficient de refroidissement :")
-    md.append("  $$ K = \\frac{k\\,U\\,L}{\\dot{m}\\,c_p} \\quad\\text{(eq. (20), §5.8.2)} $$")
-    md.append("- Coefficients de transfert thermique :")
-    md.append("  $$ k_b = \\left(\\tfrac{1}{\\alpha_i} + \\tfrac{1}{\\Lambda} + \\tfrac{1}{\\alpha_a}\\right)^{-1} "
-              "\\quad\\text{(eq. (21), §5.8.3.1)} $$")
-    md.append("  $$ k = \\left(\\tfrac{1}{\\alpha_i} + \\tfrac{1}{\\Lambda} + \\tfrac{1}{\\alpha_a}\\right)^{-1} "
-              "\\text{ avec } S_H\\ \\text{selon §5.7.7 (eq. (22), §5.8.3.1)} $$")
-    md.append("- Transfert interne par convection :")
-    md.append("  $$ \\alpha_i = \\frac{\\mathrm{Nu}\\,\\lambda_A}{D_h} \\quad\\text{(eq. (23), §5.8.3.2)} $$")
-    md.append("- Nombre de Nusselt :")
-    md.append("  $$ \\mathrm{Nu} = \\left(\\tfrac{\\psi}{\\psi_{\\text{smooth}}}\\right)^{0.67}\\,0.0214\\,"
-              "\\bigl(\\mathrm{Re}^{0.8}-100\\bigr)\\,\\mathrm{Pr}^{0.4}\\,"
-              "\\left[1+\\left(\\tfrac{D_h}{L_{tot}}\\right)^{0.67}\\right] \\quad\\text{(eq. (24), §5.8.3.2)} $$")
-    md.append("- Nombres sans dimension :")
-    md.append("  $$ \\mathrm{Pr} = \\tfrac{c_p\\,\\eta_A}{\\lambda_A} \\quad\\text{(eq. (25), §5.8.3.2)} "
-              "\\qquad \\mathrm{Re} = \\tfrac{\\rho_m\\,w_m\\,D_h}{\\eta_A} \\quad\\text{(eq. (26), §5.8.3.2)} $$")
-    md.append("  _(Forme utilisée dans le code pour Re : "
-              "$\\mathrm{Re} = \\tfrac{\\dot{m}\\,D_h}{A\\,\\eta_A}$, équivalente à l’eq. (26).)_")
-    md.append("- Grandeurs de base :")
-    md.append("  $$ \\rho_m = \\tfrac{p_L}{R\\,T_m} \\quad\\text{(eq. (27), §5.9.1)} \\qquad "
-              "w_m = \\tfrac{\\dot{m}}{\\rho_m\\,A} \\quad\\text{(eq. (28), §5.9.2)} $$")
-    md.append("- Frottement (équation de Colebrook sous la forme de la norme) :")
-    md.append("  $$ \\frac{1}{\\sqrt{\\psi}} = -2\\,\\log_{10}\\!\\left(\\frac{2.51}{\\mathrm{Re}\\,\\sqrt{\\psi}} "
-              "+ \\frac{r}{3.71\\,D_h}\\right) \\quad\\text{(eq. (35), §5.10.3.3)} $$")
-    md.append("")
-    md.append("**Propriétés des fumées (Annexe B)**")
-    md.append("")
-    md.append("- $R$ (constante des gaz fumées), $c_p(T_m,\\sigma\\_{CO_2})$, $\\lambda_A(T_m)$ : "
-              "voir §5.7.3.2, §5.7.5 et §5.8.3.2 (formules données en Annexe B, tab. B.1/B.3/B.8).")
-    md.append("- $\\eta_A(T_m)$ (viscosité dynamique) : formule (B.10), Annexe B.")
-    md.append("- $\\sigma\\_{CO_2}$, $\\sigma\\_{H_2O}$ : valeurs de l’Annexe B selon le combustible/appareil.")
-    md.append("- Température de paroi en sortie $T_{iob}$ : voir §5.12 (méthode de calcul).")
-
-    md.append("")
-    md.append("## 3. Résultats principaux")
-    # show a curated subset first
-    main_keys = [("A", "$A$ (Section interne)"), ("A_t", "$A_t$ (Surface totale du conduit de fumée)"), ("A_v", "$A_v$ (Surface totale du conduit de raccordement)"), ("p_L", "$p_L$ (Pression extérieure)"), ("R", "$R$ (Constante des gaz des fumées)"), ("c_p", "$c_p$ (Capacité calorifique spécifique des fumées)"), ("lambda_A", "$\\lambda_A$ (Conductivité thermique des fumées)"), ("eta_A", "$\\eta_A$ (Viscosité dynamique des fumées)"), ("rho_m", "$\\rho_m$ (Masse volumique moyenne des fumées)"), ("w_m", "$w_m$ (Vitesse moyenne des fumées)"), ("Re", "$\\mathrm{Re}$ (Nombre de Reynolds)"), ("Pr", "$\\mathrm{Pr}$ (Nombre de Prandtl)"), ("psi", "$\\psi$ (Coefficient de frottement)"), ("psi_smooth", "$\\psi_{smooth}$ (Coefficient de frottement pour conduit lisse)"), ("Nu", "$\\mathrm{Nu}$ (Nombre de Nusselt)"), ("alpha_i", "$\\alpha_i$ (Coefficient convectif interne)"),
-        ("Res_therm", "$1/\\Lambda$ (Résistance thermique du conduit)"), ("k", "$k$ (Coefficient de transfert thermique, non équilibré)"), ("k_b", "$k_b$ (Coefficient de transfert thermique, équilibré)"), ("K", "$K$ (Coefficient de refroidissement, non équilibré)"), ("K_b", "$K_b$ (Coefficient de refroidissement, équilibré)"), ("K_ob", "$K_{ob}$ (Coefficient de refroidissement à la sortie)"), ("T_m", "$T_m$ (Température moyenne des fumées)"), ("T_ob", "$T_{ob}$ (Température des fumées à la sortie, équilibrée)"), ("T_iob", "$T_{iob}$ (Température de la paroi interne à la sortie)"), ("m_dot", "$\\dot{m}$ (Débit massique des fumées)"), ]
-    for key, label in main_keys:
-        if key in res:
-            md.append(f"- **{label}** = {fmt(res[key])}")
-
-    md.append("")
-    md.append("## 4. Vérifications de domaine (conformité des équations)")
-    if checks:
-        md.extend(checks)
-    else:
-        md.append("_Aucune vérification disponible._")
-
-    md.append("")
-    md.append("## 5. Remarques et cas particuliers")
-    md.append("- **αa (extérieur/intérieur)** : la norme fixe 23 W/(m²·K) à l’extérieur et 8 W/(m²·K) à "
-              "l’intérieur (§5.8.3.3). Nous utilisons une interpolation linéaire entre ces deux valeurs, en fonction de la proportion de cheminée"
-                " en intérieur/extérieur (cf. §5.8.3.3).")
-    md.append("- **T_u = 15 °C** car environnement chauffé avec surface de cheminée située à l'exterieur < 1/4 de la surface totale (§ 5.7.1.3 NOTE 1)")
-    md.append("- Les résultats obtenus sont calculés par approximation itérative, avec une valeur de T_m initiale de 223 °C à la première itération.")
-    md.append('')
-    md.append("---")
-
-
-    # ---------- write file ----------
-    content = "\n".join(md) + "\n"
-    with open(filename, "w", encoding="utf-8") as f:
-        f.write(content)
-
-    # Provide a console hint for the caller (kept minimal)
-    print(f"Markdown report written to: {filename}")
-    return filename
 
 def m_dot_f(Q_F, f_m1, f_m2, sigma_CO2):
     r"""
@@ -529,7 +284,7 @@ def solve_conduit(T_L, T_e, T_u, T_uo, L, D_h, Res_therm, L_ext, Q, eta, z, H, t
         Re = (m_dot * D_h) / (A * eta_A)
         # si < 2300 alors Re = 2300
         Re = max(Re, 2300)
-        show_value(Re, 'Re')
+
 
         f_c0 = 23  # 23.5
         f_c1 = 0.015
@@ -624,7 +379,7 @@ def solve_conduit(T_L, T_e, T_u, T_uo, L, D_h, Res_therm, L_ext, Q, eta, z, H, t
     P_G = 0.5 * (rho_2 * w_2 ** 2 - rho_1 * w_1 ** 2).to('pascal')
 
     # Perte de charge par frottement
-    P_R_frottement = (psi * (L / D_h) * 0.5 * rho_m * w_m ** 2).to('pascal')
+    P_E_frottement = (psi * (L / D_h) * 0.5 * rho_m * w_m ** 2).to('pascal')
 
     S_EG = S_E if P_G.magnitude >= 0 else 1
 
@@ -635,8 +390,8 @@ def solve_conduit(T_L, T_e, T_u, T_uo, L, D_h, Res_therm, L_ext, Q, eta, z, H, t
     # Nous avons une seule changement de direction/raccord, entre le circuit de raccordement et le circuit de fumée
     sum_Zeta_i = Zeta_racc
 
-    P_R_raccord = (sum_Zeta_i * 0.5 * rho_m * w_m ** 2).to('pascal')
-    P_E = P_R_frottement + P_R_raccord
+    P_E_raccord = (sum_Zeta_i * 0.5 * rho_m * w_m ** 2).to('pascal')
+    P_E = P_E_frottement + P_E_raccord
     P_R = S_E * P_E + S_EG * P_G
 
 
@@ -687,11 +442,15 @@ def solve_conduit(T_L, T_e, T_u, T_uo, L, D_h, Res_therm, L_ext, Q, eta, z, H, t
         'P_G': P_G,
         'P_E': P_E,
         'P_R': P_R,
+        'P_E_frottement': P_E_frottement,
+        'P_E_raccord': P_E_raccord,
+        'L': L,
         }
 
 
+
+
 def main():
-    from json_pint import json_pint_load, json_pint_dump
 
     # ╔╦╗╔═╗╔╗╔╔╗╔╔═╗╔═╗╔═╗  ╔═╗╔╗╔╔╦╗╦═╗╔═╗╔═╗
     #  ║║║ ║║║║║║║║╣ ║╣ ╚═╗  ║╣ ║║║ ║ ╠╦╝║╣ ║╣
@@ -758,19 +517,20 @@ def main():
     # Température de l’air ambiant à la sortie du conduit (Tuo)
     # 0 °C pour ambiance sèche, sans condensation - c'est donc différent de T_L, ce n'est pas une erreur
     T_uo = Q_(0, "degC")
-    res = solve_conduit(T_L=T_L, T_e=T_e, T_u=T_u, T_uo=T_uo, L=L, D_h=D_h, Res_therm=Res_therm, L_ext=L_ext, Q=Q_N, eta=eta, z=z, H=H, type_calcul="pression_mini")
+    res_min = solve_conduit(T_L=T_L, T_e=T_e, T_u=T_u, T_uo=T_uo, L=L, D_h=D_h, Res_therm=Res_therm, L_ext=L_ext, Q=Q_N, eta=eta, z=z, H=H, type_calcul="pression_mini")
 
-    if res['condensation']:
+    if res_min['condensation']:
         print("**ATTENTION**: Condensation probable dans le conduit de fumée (T_iob < t_p). Repeter les calculs pour le cas avec condensation (calculs_condensation_temperature.py). "
               "Bon courage !!")
     else:
         print("Pas de condensation dans le conduit de fumée, critère (6) vérifié.")
 
-    P_ZOmin = res['P_R'] - res['P_H']
+    P_ZOmin = res_min['P_R'] - res_min['P_H']
     print(f"P_ZOmin (pression minimale) = {P_ZOmin:.1f}")
+    res_min.update({
+        'P_ZOmin': P_ZOmin,
+        })
 
-    with open("results_tirage_maxi.json", "w") as f:
-        json_pint_dump(res, f, ureg, indent=2)
 
     # ==============================================================
     # Vérification des critère de tirage minimal / pression positive maximale
@@ -781,15 +541,24 @@ def main():
     T_L = Q_(15, "degC") # Pas très élevé, mais c'est le valeur donnée dans la norme (5.7.1.3)
 
     T_uo = T_L
-    res = solve_conduit(T_L=T_L, T_e=T_e, T_u=T_u, T_uo=T_uo, L=L, D_h=D_h, Res_therm=Res_therm, L_ext=L_ext, Q=Q_N, eta=eta, z=z, H=H, type_calcul="pression_maxi")
+    res_max = solve_conduit(T_L=T_L, T_e=T_e, T_u=T_u, T_uo=T_uo, L=L, D_h=D_h, Res_therm=Res_therm, L_ext=L_ext, Q=Q_N, eta=eta, z=z, H=H, type_calcul="pression_maxi")
 
-    P_ZO = res['P_R'] - res['P_H'] + P_L
+    P_ZO = res_max['P_R'] - res_max['P_H'] + P_L
 
+    res_max.update({
+        'P_L': P_L,
+        'P_ZO': P_ZO,
+        })
     print(f"P_ZO (pression maximale) = {P_ZO:.1f}")
 
-    with open("results_tirage_minim.json", "w") as f:
-        json_pint_dump(res, f, ureg, indent=2)
+    do_report(res_min=res_min, res_max=res_max, filename="./note_calculs/note_de_calcul.md")
+    do_report_english(res_min=res_min, res_max=res_max, filename="./note_calculs/note_de_calcul_english.md")
 
+    # Print all the jsons
+    print("\n--- Résultats complets (pression minimale) ---")
+    print(json.dumps(res_min, indent=2, default=str))
+    print("\n--- Résultats complets (pression maximale) ---")
+    print(json.dumps(res_max, indent=2, default=str))
 
 if __name__ == "__main__":
     main()

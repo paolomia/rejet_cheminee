@@ -31,6 +31,8 @@ Les températures minime des dernières années sont les suivantes :
 2022 	-9.1 °C
 2021 	-14.4 °C
 
+La sortie de fumée n'est pas dans une zone soumise a une pression défavorable (5.10.4 pg. 36 de la norme).
+
 D'après les plans, la puissance nominale de l'installation est de 140 kW
 ![img_1.png](img_1.png)
 
@@ -41,18 +43,8 @@ Je n'ai pas de données concernant la pression maximale supportée par le condui
 
 Nous n'avons pas de données sur le debit massique des fumées, mais la norme (5.5.2.1 pg. 20 et Tab B.1 pg. 99) donne une formule pour l'estimation théorique. Pour les valeurs données, nous avons un debit massique estimé de 0.068 kg/s.
 
-La température de fumée la plus faible n'est pas connue, donc nous pouvons prendre 310 * 2/3 = 207 °C d'après 5.5.3.2 pg. 22
+Le chauffage marche en tout ou rien, donc nous pouvons prendre les valeurs de débit massique et de température des fumées qui correspondent à la puissance nominale.
 
-Le debit massique minimum n'est pas connue non plus, donc nous pouvons prendre 0.068/3 = 0.023 kg/s d'après 5.5.2.2 pg. 21
-
-Aussi, d'après les tests réalisés par Omia, nous avons les pertes de charge suivantes:
-
-Foyer échangeur : 0.45 mmCE d'eau = 4.4 Pa
-Cheminée : 0.4 mmCE d'eau = 3.9 Pa
-
-![img_3.png](img_3.png)
-
-Pour la conversion en Pa, nous avons 1 mmCE d'eau = 9.8 Pa
 ## 1.2 Critères
 
 Nous sommes dans le cas d'un conduit fonctionnant sous pression positive. Nous devons respecter les 4 critères suivants (pg.17, 5.1)
@@ -120,50 +112,68 @@ Note:
 
 - la pression dans la chambre de combustion monte considerablement lors de l'allumage du bruleur.
 - D'après le test avec fumigène, la pression dans le conduit est négative même au bruleur éteint. La valeur n'est pas mésurable avec l'appareil de Francis.
+- La difference de pression nous donne une estimation de la perte de charge dans le foyer échangeur, qui est d'environ 30 Pa.
+
+## 1.4 Remarques
+
+La norme prevoit des critères different pour le cas d'un système de chauffage à pression positive ou négative. J'hésite en partie à situer le notre, car je vois des arguments pour les deux cas.
+
+**Pression positive:**
+- Le bruleur est un bruleur à air soufflé, avec une plage de fonctionnnement en pression positive plus importante.
+- Exigences moins strictes pour les calculs
+
+**Pression négative:**
+- Le bruleur fonctionne en pression négative
+- Moins d'exigeances pour la ténue du conduit de fumée
+
+J'ai choisi de faire les calculs en pression positive.
 
 # 2. Calculs
 
-## 2.1 Pression - Critères 1-2
-Nous avons les plage de pression de fonctionnement du bruleur, mais pas de l'ensemble bruleur + foyer. Cependant, j'estime que nous pouvons quand même justifier l'adhérence du conduit aux critères de pression imposés.
+## 2.1 Pression - Critères 1-3
 
-Le conduit de fumée dispose d'un volet réglable pour le bon fonctionnement du bruleur. Soit **P_R_volet** la perte de charge en Pa engendrée par le volet.
+Nous avons les données suivantes (voir note de calcul):
 
-D'après les calculs, nous obtenons les valeurs suivant (estimation un peu grossière, pour presenter l'argument) :
+P_ZO ≈ -31 Pa
+P_ZOmin ≈ -43 Pa
 
 
-P_ZO ≈ -3 Pa + P_R_volet
-P_ZOmin ≈ -38 Pa + P_R_volet
+La perte de charge du foyer échangeur est estimée à 30 Pa. Étant donné l'incertitude sur cette valeur, nous pouvons prendre une marge de securité du 100% et affirmer que la perte de charge du foyer échangeur est comprise entre 15 et 60 Pa.
 
-Essentiellement, étant donné que la vitesse de la fumée est extrêmement faible, la perte de charge engendrée par le conduit est négligeable, avec une valeur de tirage bien plus importante (40 Pa) qui peut être compensée par le volet.
-
-Nous avons le graphique suivant pour les plages de fonctionnement du bruleur :
+Pour les plages de pression du bruleur Riello (modèle BS3/M), nous avons les données suivantes (extrait de la documentation technique):
 ![img.png](img.png)
 
-donc entre -50 Pa et 300 Pa.
+donc entre -50 Pa et 200 Pa à la puissance nominale.
 
-Il faut trouver comment le presenter auprès du client, mais à mon avis, avec ces données, nous respectons largement les critères de pression 1-2.
+Donc, la plage de valeurs de pressions admissibles au niveau de l'entrée du conduit de fumée est :
 
-Nous avons une cheminée avec une perte de charge adjustable, à partir de -8 Pa avec une plage de pression qui varie de moins de 40 Pa
+- Valeur minimale : La plus petite valeur de pression admise pour le bruleurs moins la plus petite valeur de perte de charge du foyer échangeur.
+P_ZOemin = -50 - 15 = -65 Pa
 
-Le bruleur supporte une plage de variation bien plus importante. Si les critères de pression n'étaient pas ici respectés, alors ça ne serait pas la cheminée à devoir être remise en question, mais le système bruleur - foyer échangeur. 
+- Valeur maximale : La plus grande valeur de pression pour le bruleurs moins la plus grande valeur de perte de charge du foyer échangeur.
+P_ZOe = 200 - 60 = 140 Pa
 
-## 2.2 Pression - Critère 3
+Nous avons donc :
+- P_ZO ≈ -31 Pa ≤ P_ZOe = 140 Pa  (**Critère 1 : OK**)
+- P_ZO_min = -43 Pa ≥ P_ZOemin = -65 Pa (**Critère 3 : OK**)
+
+
+## 2.2 Pression - Critère 2
 
 Je n'ai pas d'élément concernant la pression maximale supportée par nos conduits de fumée. 
-Réalistiquement, j'imagine que nos conduits peuvent supporter une pression d'au moins 300 Pa, ce qui est la pression maximale de fonctionnement du bruleur ?
+
+La presence du trou pour l'évacuation des condensats dans le raccordement implique que la pression doit être négative pour assurer qu'il n'y ait pas de sortie de fumée. Étant donné que la pression au niveau du raccordement est comprise entre -26 et -38 Pa (la perte de charge du raccordement est de 5 Pa) les conditions de pression sont théoriquement respectées.
+
+Dans le cadre de la norme, l'action du vent (25 Pa) doit être prise en compte uniquement dans le cas d'une position de cheminée défavorable.
+Sauf que le batiment en question est en depression, à cause de l'extraction des aires de préparation.
+
+Mais cela nous engage à garantir que la pression dans le conduit de fumée reste toujours négative.
+
+**Critère 2: ???**
 
 ## 2.3 Température - Critère 4
 
-La température de rosée est estimée à 55 °C. Même si la température de la fumée à la sortie est autour de ~130 °C, la condution thermique avec l'air ambiant est bien plus importante, ce qui implique que nous avons sans doute de la condensation dans le conduit.
+La température de rosée est estimée à 53 °C, la température de paroi intérieure à la sortie du conduit de fumée est de 68 °C (voir note de calcul). 
 
-Cela nous oblige à réaliser le calcul avec condensation (Section 8, pg 82) ce qui est un calcul encore plus tédieux, qui demande de découper le conduit en segment, et pour chacun resoudre un système d'équations qui décrivent le processus de transfert thermique du à la condensation.
-Il faut que la température de la paroi intérieure à la sortie du conduit de fumée soit ≥ 0 °C.
-
-Nous devons considerer les hyphothèses les plus défavorables :
-- Température extérieure : -15 °C
-- Température intérieure : 15 °C
-- Débit massique minimum : 0.023 kg/s
-- Température de fumée minimum : 207 °C
-
-Avec ces données, en appliquant la méthode de la section 8, nous obtenons une température de paroi intérieure à la sortie du conduit de fumée de 8 °C, qui respecte donc le critère 4.
+Donc T_iob = 68 °C ≥ T_ig = 53 °C (**Critère 4 : OK**)
 
