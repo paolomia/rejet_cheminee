@@ -49,6 +49,7 @@ def main():
     D_h = 0.2 * ureg.m
     psi_mean = df['psi'].mean()
     w_mean = df['w_m'].mean() * ureg.m / ureg.s
+    print(f"{w_mean=}, {w_1=}, {w_2=}")
 
     P_R_frottement = (psi_mean * L_tot/D_h * (rho_m_mean * (w_mean**2) / 2)).to('pascal')
     print(f"Perte de charge due au frottement P_R_frottement: {P_R_frottement.to('pascal')}")

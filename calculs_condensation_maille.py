@@ -1,8 +1,18 @@
 import math
 
+from calculs import alpha_i
 from report import *
 import json
 from joblib import Memory
+
+
+
+def m_dot(Q_F, f_m1, f_m2, sigma_CO2):
+    r"""
+    \dot{m} = \left(\frac{f_{m1}}{\sigma(\text{CO}_2)} + f_{m2}\right) \cdot Q_F
+    """
+    return (f_m1 / sigma_CO2 + f_m2) * Q_F
+
 
 
 def sigma_CO2_f(Q_N, f_x1, f_x2, f_x3):
@@ -92,9 +102,8 @@ def c_p_f(t_m, sigma_CO2, f_c0, f_c1, f_c2, f_c3):
     c_p = \frac{1011 + 0.05 \, t_m + 0.0003 \, t_m^2 + (f_{c0} + f_{c1} \, t_m + f_{c2} \, t_m^2)\,\sigma(CO_2)}{1 + f_{c3}\,\sigma(CO_2)}
     \quad\text{avec } t_m \text{ en °C}
     """
-    # conversion en °C si pint.Quantity
-    if hasattr(t_m, "to"):
-        t_m = t_m.to(ureg.degC).magnitude
+    # conversion en °C
+    t_m = t_m.to(ureg.degC).magnitude
 
     numerator = 1011 + 0.05 * t_m + 0.0003 * (t_m ** 2) + (f_c0 + f_c1 * t_m + f_c2 * (t_m ** 2)) * sigma_CO2
     denominator = 1 + f_c3 * sigma_CO2
@@ -187,6 +196,7 @@ def delta_m_D_j_f(m_dot, R, p_D, p_L, p_Do_prev, p_Do_j, f_K):
     term2 = (1 - p_D / p_L)
     term3 = (p_Do_prev / (p_L - p_Do_prev)) - (p_Do_j / (p_L - p_Do_j))
     val = term1 * term2 * term3 * (f_K / 100.0)
+    val = max(0 * ureg.kg / ureg.s, val)  # ensure non-negative
     return val.to('kg/s')
 
 def T_ob_j_f(T_ob_prev, K_b_j, q_K_j, m_dot_o_j, m_dot_o_prev, c_po_j, c_po_j_prev, T_u_j):
@@ -225,35 +235,51 @@ def Re_f(w_m, D_h, rho_m, eta_A):
     Re = Re.to('dimensionless')
     return max(Re.magnitude, 2300)  # minimum 2300
 
+# def m_dot_theor
 
 
-def solve_conduit_helper_sans_condensation(T_m, T_in, T_u, T_uo, L, m_dot, D_h, Res_therm, alpha_a, T_e=None, data_j_prev=None, L_tot=None):
-    # Puissance thermique nominale
-    Q_F = 48 * ureg.kW
+def solve_conduit_helper(T_m, T_in, T_u, T_uo, L, m_dot, D_h, Res_therm, alpha_a, T_L=None, T_e=None, data_j_prev=None, L_tot=None) -> dict:
+    """
+    Calculs communs aux segments avec et sans condensation.
+    """
+    if T_L is None:
+        T_L = T_uo
+
+    # Q est la puissance utile
+    # Q_N est la puissance utile nominale
+    # Q_F est le debit calorifique
+
+    # Nous devons valider les exigencer pour la puissance utile nomintale de l'appareil à combustion déclarée par le fabricant
+    # ous sinon la puissance utile nominale et la plus petite valeur de la plage de puissance utile declarée par le fabricant
+    # Pour nous le discours est un peu compliqué, car nous avons un bruleur + foyer
+    # d'après les essais de Frank, le rendement du foyer est de 86.5 %
+    # la puissance du bruleur est de 48/79 - 195 kW mais je n'ai pas de nominale
+    # je vais donc prendre le nominal le plus bas (condition la plus défavorable) -> 48 kW
+
+    Q = 140 * ureg.kW
+    Q_F = Q / 0.86
+    # et donc on va prendre le nominal le plus bas
+    Q_N = Q
+
+
     # 48 - 195
+    # Hauteur au dessus du niveau de la mer
+    z = 10 * ureg.m
 
-    # Annexe B3
+    # Coefficient de calcul de la teneur en vapeur d'eau des fumées
+    # Annexe B3, valeurs pour gaz et tirage forcé
     f_x1 = 8.6
     f_x2 = 0.078
     f_x3 = 10.2
+    # B.1
+    # f_w = 56.5 # pour le fioul
+    f_w = 111 # gaz nat
 
-    # Puissance utile nominale
-    Q_N = Q_F * 0.85
 
     # Coefficient de calcul de la teneur en CO2 des fumées
     sigma_CO2 = sigma_CO2_f(Q_N=Q_N, f_x1=f_x1, f_x2=f_x2, f_x3=f_x3)
     # mesuration OMIA
     # sigma_CO2 = 14
-    # show_latex(sigma_CO2_f.__doc__)
-    # show_value(sigma_CO2)
-
-    # Coefficient de calcul de la teneur en vapeur d'eau des fumées
-    # Annexe B3, valeurs pour gaz et tirage forcé
-    f_w = 56
-    # [56, 57]  # %
-
-    f_m1 = [3.72, 3.75]
-    f_m2 = [0.053, 0.054]
 
     # Teneur en vapeur d'eau des fumées (%)
     sigma_H2O = sigma_H2O_f(f_w=f_w, sigma_CO2=sigma_CO2)
@@ -262,13 +288,6 @@ def solve_conduit_helper_sans_condensation(T_m, T_in, T_u, T_uo, L, m_dot, D_h, 
     # Constant de gaz de l'air
     R_L = 288 * ureg.joule / (ureg.kg * ureg.kelvin)
     R = R_f(R_L=R_L, sigma_CO2=sigma_CO2, avec_condensation=True)
-
-    # Hauteur au dessus du niveau de la mer
-    z = 10 * ureg.m
-
-    # Température de l'air extérieur
-    T_L = Q_(-15, 'degC')
-    # Prendre +15 °C pour tirage minimal ou pressio positive maximale ou niveau de l'admisson des fumées dans le conduits
 
     # Pression de l'air extérieur
     p_L = p_L_f(T_L=T_L, z=z, R_L=R_L)
@@ -289,9 +308,9 @@ def solve_conduit_helper_sans_condensation(T_m, T_in, T_u, T_uo, L, m_dot, D_h, 
     A = 3.1416 * (D_h / 2) ** 2  # m^2
     # show_value(A)
 
-
-
-
+    # Surface totale conduit de fumée
+    A_t = U * L  # m^2
+    # show_value(A_t)
 
     # rendement de l'appareil à combustion (%)
     eta = eta_w(Q_N=Q_N)
@@ -305,25 +324,21 @@ def solve_conduit_helper_sans_condensation(T_m, T_in, T_u, T_uo, L, m_dot, D_h, 
 
     # Coefficient de conductivité thermique des fumées
     lambda_A = lambda_A_f(t_m=T_m)
-    # show_latex(lambda_A_f.__doc__)
-    # show_value(lambda_A)
-
-    # show_value(R.to('joule/(kg*kelvin)'))
 
     # Densité moyenne des fumées
     rho_m = p_L / (R * T_m.to('kelvin'))
     # show_value(rho_m.to('kg/m^3'))
 
-    # Vitesse moyenne des fumées
-    w_m = m_dot / (rho_m * A)
+    # Vitesse moyenne des fumées, il faut utiliser le nouveau debit massique apres condensation
+    m_dot_segment = data_j_prev['m_dot_o_j'] if data_j_prev is not None else m_dot
+    w_m = m_dot_segment / (rho_m * A)
     # show_value(w_m.to('m/s'))
 
     # Nombre de Reynolds
     Re = Re_f(w_m=w_m, D_h=D_h, rho_m=rho_m, eta_A=eta_A)
-    # si < 2300 alors Re = 2300
-    Re = max(Re, 2300)
-    # show_value(Re, 'Re')
 
+    # show_value(Re, 'Re')
+    # B.1
     f_c0 = 23  # 23.5
     f_c1 = 0.015
     f_c2 = -0.000007
@@ -331,15 +346,11 @@ def solve_conduit_helper_sans_condensation(T_m, T_in, T_u, T_uo, L, m_dot, D_h, 
 
     # Capacité calorifique specifique des fumées (pg 99)
     c_p = c_p_f(t_m=T_m, sigma_CO2=sigma_CO2, f_c0=f_c0, f_c1=f_c1, f_c2=f_c2, f_c3=f_c3)
-    # show_latex(c_p_f.__doc__)
-    # show_value(c_p, 'c_p')
 
     # Nombre de Prandtl
     Pr = (c_p * eta_A) / lambda_A
-    # show_value(Pr, 'Pr')
+
     if Pr < 0.6 or Pr > 1.5:
-        # TODO: Add an exception
-        # show_latex("**Attention**: Pr n'est pas entre 0.6 et 1.5, les calculs peuvent être incorrects.")
         print("**Attention**: Pr n'est pas entre 0.6 et 1.5, les calculs peuvent être incorrects.")
 
     # valeur moyenne de rugosité tab. B.4 pg 102
@@ -349,18 +360,50 @@ def solve_conduit_helper_sans_condensation(T_m, T_in, T_u, T_uo, L, m_dot, D_h, 
     psi = colebrook_psi(Re=Re, r=r, D_h=D_h)
     psi_smooth = colebrook_psi(Re=Re, r=0 * ureg.m, D_h=D_h)
 
-    # show_value(psi, 'psi')
-    # show_value(psi_smooth, 'psi_smooth')
 
     # Nombre de Nusselt
     Nu = Nu_f(psi=psi, psi_smooth=psi_smooth, Re=Re, Pr=Pr, D_h=D_h, L_tot=L_tot)
-    # show_value(Nu, 'Nu')
 
     # Coefficient intener de transfert de chaleur par convection
     alpha_i = (Nu * lambda_A) / D_h
     # convert to SI
-    alpha_i = alpha_i.to_base_units()
-    # show_value(alpha_i, 'alpha_i')
+    alpha_i = alpha_i.to_base_units()  # show_value(alpha_i, 'alpha_i')
+
+    res = {
+        'A': A,
+        'sigma_CO2': sigma_CO2,
+        'eta': eta,
+        'sigma_H2O': sigma_H2O,
+        'p_L': p_L,
+        'T_m': T_m,
+        'eta_A': eta_A,
+        'lambda_A': lambda_A,
+        'R': R,
+        'rho_m': rho_m,
+        'w_m': w_m.to('m/s'),
+        'Re': Re,
+        'Pr': Pr,
+        'c_p': c_p,
+        'psi': psi,
+        'psi_smooth': psi_smooth,
+        'Nu': Nu,
+        'alpha_i': alpha_i.to_base_units(),
+        'alpha_a': alpha_a.to_base_units(),
+        't_p': t_p,
+        'U': U,
+        'p_D': p_D,
+        }
+    return res
+
+
+def solve_conduit_sans_condensation(T_m, T_in, T_u, T_uo, L, m_dot, D_h, Res_therm, alpha_a, T_e=None, data_j_prev=None, L_tot=None, T_L=None) -> dict:
+    res = solve_conduit_helper(T_m=T_m, T_in=T_in, T_u=T_u, T_uo=T_uo, L=L, m_dot=m_dot, D_h=D_h, Res_therm=Res_therm, alpha_a=alpha_a, T_e=T_e, data_j_prev=data_j_prev, L_tot=L_tot)
+
+    # Extract values from helper result
+    alpha_i = res['alpha_i']
+    t_p = res['t_p']
+    c_p = res['c_p']
+    U = res['U']
 
     # Coefficient de transfert thermique température NON équilibrée
     k = 1 / (1 / alpha_i + 0.5 * (Res_therm + 1 / alpha_a))
@@ -399,25 +442,9 @@ def solve_conduit_helper_sans_condensation(T_m, T_in, T_u, T_uo, L, m_dot, D_h, 
     # Calcul point de rosée
     condensation = T_iob.to('degC') < t_p.to('degC')
 
-    res = {
+    res.update({
         'type_calcul': 'segment_sans_condensation',
-        'A': A,
-        'sigma_CO2': sigma_CO2,
-        'eta': eta,
-        'sigma_H2O': sigma_H2O,
-        'p_L': p_L,
         'T_m': T_m,
-        'eta_A': eta_A,
-        'lambda_A': lambda_A,
-        'R': R,
-        'rho_m': rho_m,
-        'w_m': w_m.to('m/s'),
-        'Re': Re,
-        'Pr': Pr,
-        'c_p': c_p,
-        'psi': psi,
-        'psi_smooth': psi_smooth,
-        'Nu': Nu,
         'alpha_i': alpha_i,
         'alpha_a': alpha_a,
         'Res_therm': Res_therm,
@@ -436,145 +463,24 @@ def solve_conduit_helper_sans_condensation(T_m, T_in, T_u, T_uo, L, m_dot, D_h, 
         'L': L,
         'T_u': T_u,
         'contr_condens': 0 * ureg.delta_degC,
-        }
+        })
 
     return res
 
 
-def solve_conduit_helper_avec_condensation(T_iob, T_ob, T_in, T_u, T_uo, L, m_dot, D_h, Res_therm, alpha_a, T_e=None, data_j_prev=None, L_tot=None):
+def solve_conduit_avec_condensation(T_iob, T_ob, T_in, T_u, T_uo, L, m_dot, D_h, Res_therm, alpha_a, T_e=None, data_j_prev=None, L_tot=None):
     T_m = (T_in.to('kelvin') + T_ob.to('kelvin')) / 2.0
-    # Puissance thermique nominale
-    Q_F = 48 * ureg.kW
-    # 48 - 195
 
-    # Annexe B3
-    f_x1 = 8.6
-    f_x2 = 0.078
-    f_x3 = 10.2
-
-    # Puissance utile nominale
-    Q_N = Q_F * 0.85
-
-    # Coefficient de calcul de la teneur en CO2 des fumées
-    sigma_CO2 = sigma_CO2_f(Q_N=Q_N, f_x1=f_x1, f_x2=f_x2, f_x3=f_x3)
-    # mesuration OMIA
-    # sigma_CO2 = 14
-    # show_latex(sigma_CO2_f.__doc__)
-    # show_value(sigma_CO2)
-
-    # Coefficient de calcul de la teneur en vapeur d'eau des fumées
-    # Annexe B3, valeurs pour gaz et tirage forcé
-    f_w = 56
-    # [56, 57]  # %
-
-    f_m1 = [3.72, 3.75]
-    f_m2 = [0.053, 0.054]
-
-    # Teneur en vapeur d'eau des fumées (%)
-    sigma_H2O = sigma_H2O_f(f_w=f_w, sigma_CO2=sigma_CO2)
-    # show_latex(sigma_H2O_f.__doc__)
-
-    # Constant de gaz de l'air
-    R_L = 288 * ureg.joule / (ureg.kg * ureg.kelvin)
-    R = R_f(R_L=R_L, sigma_CO2=sigma_CO2, avec_condensation=True)
-
-    # Hauteur au dessus du niveau de la mer
-    z = 10 * ureg.m
-
-    # Température de l'air extérieur
-    T_L = Q_(-15, 'degC')
-    # Prendre +15 °C pour tirage minimal ou pressio positive maximale ou niveau de l'admisson des fumées dans le conduits
-
-    # Pression de l'air extérieur
-    p_L = p_L_f(T_L=T_L, z=z, R_L=R_L)
-    # show_latex(P_L_f.__doc__)
-    # show_value(p_L)
-
-    # Pression partielle de la vapeur d'eau dans les fumées
-    p_D = (sigma_H2O / 100) * p_L
-
-    # Température de rosée
-    t_p = 4077.9 / (23.6448 - math.log(p_D.magnitude)) - 236.67
-    t_p = Q_(t_p, 'degC')
-
-    # Circonférence intérieure du conduit de fumée
-    U = 3.1416 * D_h  # m
-
-    # Section cheminée/appareil à combustion
-    A = 3.1416 * (D_h / 2) ** 2  # m^2
-    # show_value(A)
-
-    # Surface totale conduit de fumée
-    A_t = U * L  # m^2
-    # show_value(A_t)
-
-    # rendement de l'appareil à combustion (%)
-    eta = eta_w(Q_N=Q_N)
-    # show_latex(eta_w.__doc__)
-    # show_value(eta)
-
-    # Viscosité dynamique des fumées
-    eta_A = eta_A_f(t_m=T_m)
-    # show_latex(eta_A_f.__doc__)
-    # show_value(eta_A, 'eta_A')
-
-    # Coefficient de conductivité thermique des fumées
-    lambda_A = lambda_A_f(t_m=T_m)
-    # show_latex(lambda_A_f.__doc__)
-    # show_value(lambda_A)
-
-    # show_value(R.to('joule/(kg*kelvin)'))
-
-    # Densité moyenne des fumées
-    rho_m = p_L / (R * T_m.to('kelvin'))
-    # show_value(rho_m.to('kg/m^3'))
-
-    # Vitesse moyenne des fumées, il faut utiliser le nouveau debit massique apres condensation
-    w_m = data_j_prev['m_dot_o_j'] / (rho_m * A)
-    # show_value(w_m.to('m/s'))
-
-    # Nombre de Reynolds
-    Re = Re_f(w_m=w_m, D_h=D_h, rho_m=rho_m, eta_A=eta_A)
-
-    # show_value(Re, 'Re')
-
-    f_c0 = 23  # 23.5
-    f_c1 = 0.015
-    f_c2 = -0.000007
-    f_c3 = 0.0142  # 0.0144
-
-    # Capacité calorifique specifique des fumées (pg 99)
-    c_p = c_p_f(t_m=T_m, sigma_CO2=sigma_CO2, f_c0=f_c0, f_c1=f_c1, f_c2=f_c2, f_c3=f_c3)
-    # show_latex(c_p_f.__doc__)
-    # show_value(c_p, 'c_p')
-
-    # Nombre de Prandtl
-    Pr = (c_p * eta_A) / lambda_A
-    # show_value(Pr, 'Pr')
-    if Pr < 0.6 or Pr > 1.5:
-        # TODO: Add an exception
-        # show_latex("**Attention**: Pr n'est pas entre 0.6 et 1.5, les calculs peuvent être incorrects.")
-        print("**Attention**: Pr n'est pas entre 0.6 et 1.5, les calculs peuvent être incorrects.")
-
-    # valeur moyenne de rugosité tab. B.4 pg 102
-    r = 0.001 * ureg.m
-
-    # Coefficient de frottement
-    psi = colebrook_psi(Re=Re, r=r, D_h=D_h)
-    psi_smooth = colebrook_psi(Re=Re, r=0 * ureg.m, D_h=D_h)
-
-    # show_value(psi, 'psi')
-    # show_value(psi_smooth, 'psi_smooth')
-
-    # Nombre de Nusselt
-    Nu = Nu_f(psi=psi, psi_smooth=psi_smooth, Re=Re, Pr=Pr, D_h=D_h, L_tot=L_tot)
-    # show_value(Nu, 'Nu')
-
-    # Coefficient intener de transfert de chaleur par convection
-    alpha_i = (Nu * lambda_A) / D_h
-    # convert to SI
-    alpha_i = alpha_i.to_base_units()
-    # show_value(alpha_i, 'alpha_i')
+    res = solve_conduit_helper(T_m=T_m, T_in=T_in, T_u=T_u, T_uo=T_uo, L=L, m_dot=m_dot, D_h=D_h, Res_therm=Res_therm, alpha_a=alpha_a, T_e=T_e, data_j_prev=data_j_prev, L_tot=L_tot)
+    # Extract values from helper result
+    # Extract values from helper result
+    alpha_i = res['alpha_i']
+    t_p = res['t_p']
+    c_p = res['c_p']
+    U = res['U']
+    R = res['R']
+    p_L = res['p_L']
+    p_D = res['p_D']
 
     p_Do_j = p_Do_j_f(T_iob_j=T_iob)
 
@@ -652,27 +558,13 @@ def solve_conduit_helper_avec_condensation(T_iob, T_ob, T_in, T_u, T_uo, L, m_do
     q_A = data_j_prev['m_dot_o_j'] * data_j_prev['c_po_j'] * data_j_prev['T_ob'] - m_dot_o_j * c_po_j * T_ob_j + q_K_j
     q_C = alpha_iotot_j * U * L * (data_j_prev['T_ob'] - data_j_prev['T_iob'] + T_ob_j - T_iob) / 2
 
-    res = {
+    res.update({
         'type_calcul': 'segment_avec_condensation',
-        'A': A,
-        'sigma_CO2': sigma_CO2,
-        'eta': eta,
-        'sigma_H2O': sigma_H2O,
         'p_L': p_L,
         'T_m': T_m,
-        'eta_A': eta_A,
-        'lambda_A': lambda_A,
         'm_dot': m_dot,
         'R': R,
-        'rho_m': rho_m,
-        'w_m': w_m.to('m/s'),
-        'Re': Re,
-        'Pr': Pr,
         'c_p': c_p,
-        'psi': psi,
-        'psi_smooth': psi_smooth,
-        'Nu': Nu,
-        'alpha_i': alpha_i,
         'alpha_a': alpha_a,
         'Res_therm': Res_therm,
         'K_b': K_b,
@@ -698,16 +590,13 @@ def solve_conduit_helper_avec_condensation(T_iob, T_ob, T_in, T_u, T_uo, L, m_do
         'q_C': q_C,
         'T_u': T_u,
         'contr_condens': contr_condens,
-    }
+    })
 
     return res
 
 
 
-def solve_conduit(T_in, T_u, T_uo, L, m_dot, D_h, Res_therm, alpha_a, avec_condensation=False, T_e=None, data_j_prev=None, L_tot=None):
-
-    if T_e is None:
-        T_e = T_in
+def solve_conduit_minimize_method(T_in, T_u, T_uo, L, m_dot, D_h, Res_therm, alpha_a, avec_condensation=False, T_e=None, data_j_prev=None, L_tot=None, T_L=None) -> dict:
 
     #################################Ss
     # VALEUR PROVISOIRS CALCULS
@@ -722,7 +611,7 @@ def solve_conduit(T_in, T_u, T_uo, L, m_dot, D_h, Res_therm, alpha_a, avec_conde
         # Commence le calcul sans condensation
         while (abs(T_m.to('kelvin').magnitude - T_m_prev.to('kelvin').magnitude) > 1):
 
-            res = solve_conduit_helper_sans_condensation(T_m=T_m, T_in=T_in, T_u=T_u, T_uo=T_uo, L=L, m_dot=m_dot, D_h=D_h, Res_therm=Res_therm, alpha_a=alpha_a, T_e=T_e, data_j_prev=data_j_prev, L_tot=L_tot)
+            res = solve_conduit_sans_condensation(T_m=T_m, T_in=T_in, T_u=T_u, T_uo=T_uo, L=L, m_dot=m_dot, D_h=D_h, Res_therm=Res_therm, alpha_a=alpha_a, T_e=T_e, data_j_prev=data_j_prev, L_tot=L_tot)
             T_m_prev = T_m
             T_m = res['T_m']
 
@@ -760,7 +649,7 @@ def solve_conduit(T_in, T_u, T_uo, L, m_dot, D_h, Res_therm, alpha_a, avec_conde
             T_iob = T_ob * ratio_T_iob + T_uo.to('kelvin').magnitude * (1 - ratio_T_iob)
             T_iob_K = Q_(T_iob, 'kelvin')
             T_ob_K = Q_(T_ob, 'kelvin')
-            res = solve_conduit_helper_avec_condensation(T_iob=T_iob_K, T_ob=T_ob_K, T_in=T_in, T_u=T_u, T_uo=T_uo, L=L, m_dot=m_dot, D_h=D_h, Res_therm=Res_therm, alpha_a=alpha_a, T_e=T_e, data_j_prev=data_j_prev, L_tot=L_tot)
+            res = solve_conduit_avec_condensation(T_iob=T_iob_K, T_ob=T_ob_K, T_in=T_in, T_u=T_u, T_uo=T_uo, L=L, m_dot=m_dot, D_h=D_h, Res_therm=Res_therm, alpha_a=alpha_a, T_e=T_e, data_j_prev=data_j_prev, L_tot=L_tot)
             T_ob_new = res['T_ob'].to('kelvin').magnitude
             ratio_T_iob_new = (res['T_iob'] - T_uo).to('kelvin').magnitude / (res['T_ob'] - T_uo).to('kelvin').magnitude
             rel_err = math.fabs((T_ob_new - T_ob) / (T_ob - T_uo.to('kelvin').magnitude)) + math.fabs(ratio_T_iob_new - ratio_T_iob)
@@ -791,8 +680,7 @@ def solve_conduit(T_in, T_u, T_uo, L, m_dot, D_h, Res_therm, alpha_a, avec_conde
             T_iob_sol = T_ob_sol * ratio_T_iob_sol + T_uo.to('kelvin').magnitude * (1 - ratio_T_iob_sol)
             T_iob_K = Q_(T_iob_sol, 'kelvin')
             T_ob_K = Q_(T_ob_sol, 'kelvin')
-            res = solve_conduit_helper_avec_condensation(T_iob=T_iob_K, T_ob=T_ob_K, T_in=T_in, T_u=T_u, T_uo=T_uo, L=L, m_dot=m_dot, D_h=D_h, Res_therm=Res_therm, alpha_a=alpha_a, T_e=T_e, data_j_prev=data_j_prev)
-
+            res = solve_conduit_avec_condensation(T_iob=T_iob_K, T_ob=T_ob_K, T_in=T_in, T_u=T_u, T_uo=T_uo, L=L, m_dot=m_dot, D_h=D_h, Res_therm=Res_therm, alpha_a=alpha_a, T_e=T_e, data_j_prev=data_j_prev)
             q_A = res['q_A']
             q_C = res['q_C']
 
@@ -812,10 +700,8 @@ def solve_conduit(T_in, T_u, T_uo, L, m_dot, D_h, Res_therm, alpha_a, avec_conde
     return res
 
 
-def solve_conduit_old(T_in, T_u, T_uo, L, m_dot, D_h, Res_therm, alpha_a, avec_condensation=False, T_e=None, data_j_prev=None, L_tot=None):
+def solve_conduit_root_method(*args, **kwargs):
 
-    if T_e is None:
-        T_e = T_in
 
     #################################Ss
     # VALEUR PROVISOIRS CALCULS
@@ -830,14 +716,15 @@ def solve_conduit_old(T_in, T_u, T_uo, L, m_dot, D_h, Res_therm, alpha_a, avec_c
 
     while (abs(T_m.to('kelvin').magnitude - T_m_prev.to('kelvin').magnitude) > 1):
 
-        res = solve_conduit_helper_sans_condensation(T_m=T_m, T_in=T_in, T_u=T_u, T_uo=T_uo, L=L, m_dot=m_dot, D_h=D_h, Res_therm=Res_therm, alpha_a=alpha_a, T_e=T_e, data_j_prev=data_j_prev, L_tot=L_tot)
+        res = solve_conduit_sans_condensation(T_m=T_m, *args, **kwargs)
         T_m_prev = T_m
         T_m = res['T_m']
 
     print("Calculs sans condensation terminés.")
-    if res['condensation'] and avec_condensation:
+    if res['condensation']:
         print("Le conduit est en condensation, recalcul avec condensation...")
         # Recommence le calcul avec condensation
+        T_uo = kwargs.get('T_uo')
         T_ob_min = T_uo.to('kelvin').magnitude
         T_ob_max = res['T_ob'] + Q_(0.1, 'delta_degC')
         T_ob_max = T_ob_max.to('kelvin').magnitude
@@ -846,9 +733,9 @@ def solve_conduit_old(T_in, T_u, T_uo, L, m_dot, D_h, Res_therm, alpha_a, avec_c
         delta_T_iob_max = T_ob_max - T_uo.to('kelvin').magnitude
 
         def f_to_solve(T_ob, delta_T_iob):
-            T_iob = Q_(T_ob - delta_T_iob, 'kelvin')
+            T_iob_K = Q_(T_ob - delta_T_iob, 'kelvin')
             T_ob_K = Q_(T_ob, 'kelvin')
-            res = solve_conduit_helper_avec_condensation(T_iob=T_iob, T_ob=T_ob_K, T_in=T_in, T_u=T_u, T_uo=T_uo, L=L, m_dot=m_dot, D_h=D_h, Res_therm=Res_therm, alpha_a=alpha_a, T_e=T_e, data_j_prev=data_j_prev, L_tot=L_tot)
+            res = solve_conduit_avec_condensation(T_ob=T_ob_K, T_iob=T_iob_K, *args, **kwargs)
             T_ob_new = res['T_ob'].to('kelvin').magnitude
             delta_T_iob_new = T_ob_new - res['T_iob'].to('kelvin').magnitude
             r_ob = (T_ob_new - T_ob)
@@ -863,7 +750,7 @@ def solve_conduit_old(T_in, T_u, T_uo, L, m_dot, D_h, Res_therm, alpha_a, avec_c
             T_iob_sol = T_ob_sol - delta_T_iob_sol
             T_iob_K = Q_(T_iob_sol, 'kelvin')
             T_ob_K = Q_(T_ob_sol, 'kelvin')
-            res = solve_conduit_helper_avec_condensation(T_iob=T_iob_K, T_ob=T_ob_K, T_in=T_in, T_u=T_u, T_uo=T_uo, L=L, m_dot=m_dot, D_h=D_h, Res_therm=Res_therm, alpha_a=alpha_a, T_e=T_e, data_j_prev=data_j_prev, L_tot=L_tot)
+            res = solve_conduit_avec_condensation(T_ob=T_ob_K, T_iob=T_iob_K, *args, **kwargs)
 
             q_A = res['q_A']
             q_C = res['q_C']
@@ -885,51 +772,6 @@ def solve_conduit_old(T_in, T_u, T_uo, L, m_dot, D_h, Res_therm, alpha_a, avec_c
 
 
 def main():
-    # Température air ambiant à la sortie du conduit de fumée
-    # 5.7.1.3 pg 25, 0 °C (sans condensation)
-    T_uo = Q_(0, 'degC')
-    # ou -15 °C (avec condensation)
-    # T_uo = Q_(-15, 'degC')
-
-    # Température air ambiant dans la salle des chaudières
-    # 15 °C
-    T_ub = Q_(15, 'degC')
-
-    # Température air ambiant dans les zones chauffées
-    # 20 °C
-    T_uh = Q_(20, 'degC')
-
-    # Température air ambiant extérieure bâtiment
-    # égale à T_uo
-    T_ul = T_uo
-
-    # Température air ambiant non chauffées intérieur du bâtiment
-    # 0 °C
-    T_uu = Q_(0, 'degC')
-
-    # Température pour calcul d'exigeance de température de fumée
-
-    # raccord, on va dire 15 °C
-    T_uv = T_ub
-
-    # conduit de fumée, etant donné que la partie de cheminée à l'extérieur est < 1/4 de la longueur totale, on peut prendre 15 °C (Note 1 pg 26)
-    T_ut = Q_(15, 'degC')
-
-
-    # Longueur du conduit=
-
-    # Circuit de raccordement
-    # L = 0.2 * ureg.m
-    # Conduit de fumée interieur bâtiment
-    # L = 6.23 * ureg.m
-    # Conduit de fumée exterieur bâtiment
-    # L = 1.2 * ureg.m
-
-    # les segments doivent avoir la même longueur <= 0.5 m (pg 82 8.1)
-    # on va faire 21 × 0.3 m + 4 × 0.3 m
-
-
-
 
     # Coefficient externe de transfert thermique exterieur
     alpha_a_ext = 25 * ureg.watt / (ureg.meter ** 2 * ureg.kelvin)
@@ -939,10 +781,13 @@ def main():
     # Diamètre cheminée/appareil à combustion
     D_h = 200 * ureg.mm
     # Débit massique (fourni)
-    m_dot = 0.0095 * ureg.kg / ureg.s  # kg/s
+    # m_dot = 0.068 /3 * ureg.kg / ureg.s  # kg/s
+    m_dot = 0.068 * ureg.kg / ureg.s  # kg/s
     # Pg 20
     # la valeur doit être connue, ou en alternative il faut prendre les resultats des formules de l'annexe B
-    T_e = Q_(300, 'degC')
+    T_e = Q_(207, 'degC')
+    # T_e = Q_(310, 'degC')
+    T_L = Q_(-15, 'degC')
     all_data = []
     # Calculs circuit de raccordement
 
@@ -954,7 +799,7 @@ def main():
     T_in = T_e
     T_uo = T_u = Q_(15, 'degC') # raccordement dans le batiment
     Res_therm = 0 / (ureg.watt / (ureg.meter ** 2 * ureg.kelvin))
-    res_racc = solve_conduit_old(T_in=T_in, T_u=T_u, T_uo=T_uo, L=L_v, m_dot=m_dot, D_h=D_h, Res_therm=Res_therm, alpha_a=alpha_a_int, L_tot=L_v, avec_condensation=True, data_j_prev=None, T_e=T_e)
+    res_racc = solve_conduit_root_method(T_in=T_in, T_u=T_u, T_uo=T_uo, L=L_v, m_dot=m_dot, D_h=D_h, T_L=T_L, Res_therm=Res_therm, alpha_a=alpha_a_int, L_tot=L_v, data_j_prev=None, T_e=T_e)
     print(json.dumps(res_racc, indent=2, default=str))
 
     all_data.append({**res_racc, 'segment': 0, 'L_cum': L_v })
@@ -963,17 +808,17 @@ def main():
     # ==============================
 
     # Nombre de segments dans le conduit de fumée
-    Nseg = 21 + 4
     NSegK = math.inf
 
     L_tot = 6.3 * ureg.m + 1.2 * ureg.m
     L_tot_batiment = 6.3 * ureg.m
 
-    L_cum = 0 * ureg.m
+    L_cum = L_v
 
     Nseg = 25
     # Dans le batiment
     T_in = res_racc['T_ob']
+    res = None
 
     for i in range(Nseg):
         L = L_tot / Nseg
@@ -994,7 +839,7 @@ def main():
             alpha_a = alpha_a_ext
 
 
-        res = solve_conduit_old(T_in=T_in, T_u=T_u, T_uo=T_uo, L=L, m_dot=m_dot, D_h=D_h, Res_therm=Res_therm, alpha_a=alpha_a, avec_condensation=True, data_j_prev=res if i > 0 else None, L_tot=L_tot)
+        res = solve_conduit_root_method(T_in=T_in, T_u=T_u, T_uo=T_uo, L=L, m_dot=m_dot, D_h=D_h, Res_therm=Res_therm, alpha_a=alpha_a, data_j_prev=res if i > 0 else None, L_tot=L_tot, T_e=T_e)
         all_data.append({**res, 'segment': i+1, 'L_cum': L_cum})
         T_in = res['T_ob']
         print(json.dumps(res, indent=2, default=str))

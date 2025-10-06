@@ -18,3 +18,45 @@
 </head>
 <body>
 <h1>Chimney Calculations</h1>
+<div class='item'><span class='label'>Value</span>: 0.031 <code>meter ** 2</code></div>
+<div class='item'><span class='label'>Value</span>: 4.650 <code>meter ** 2</code></div>
+<div class='formula'>\[\sigma(\text{CO}_2) =
+    \begin{cases}
+    \frac{f_{x1}}{1 - f_{x2} \cdot \log_{10} Q_N} & \text{pour } Q_N \leq 100 \, \text{kW} \\
+    f_{x3} & \text{pour } Q_N > 100 \, \text{kW}
+    \end{cases}\]</div>
+<div class='item'><span class='label'>Value</span>: 9.83567</div>
+<div class='formula'>\[\eta_w =
+    \begin{cases}
+    85.0 + 1.0 \cdot \log_{10} Q_N & \text{pour } Q_N \leq 1000 \,\text{kW} \\
+    88.0 & \text{pour } Q_N > 1000 \,\text{kW}
+    \end{cases}\]</div>
+<div class='item'><span class='label'>Value</span>: 86.6107</div>
+<div class='formula'>\[\sigma(H_2O) =
+    \frac{100}{1 + \frac{f_w}{\sigma(CO_2)}} + 1.1\]</div>
+<div class='formula'>\[P_L = 97000 \cdot e^{\frac{-g \cdot z}{R_L \cdot T_L }}\]</div>
+<div class='item'><span class='label'>Value</span>: 9.69e+04 <code>kilogram / meter / second ** 2</code></div>
+<div class='formula'>\[\eta_A = 15 \cdot 10^{-6} + 47 \cdot 10^{-9} \cdot t_m - 20 \cdot 10^{-12} \cdot t_m^2
+    \quad\text{avec } t_m \text{ en °C}\]</div>
+<div class='item'><span class='label'>eta_A</span>: 2.24e-05 <code>kilogram / meter / second</code></div>
+<div class='formula'>\[\lambda_A = 0.0223 + 0.000065 \cdot t_m
+    \quad\text{avec } t_m \text{ en °C}\]</div>
+<div class='item'><span class='label'>Value</span>: 0.033 <code>kilogram * meter / kelvin / second ** 3</code></div>
+<div class='item'><span class='label'>Value</span>: 297.348 <code>meter ** 2 / kelvin / second ** 2</code></div>
+<div class='item'><span class='label'>Value</span>: 0.735 <code>kilogram / meter ** 3</code></div>
+<div class='item'><span class='label'>Value</span>: 0.433 <code>meter / second</code></div>
+<div class='item'><span class='label'>Re</span>: 2840.524 <code>dimensionless</code></div>
+<div class='formula'>\[c_p = \frac{1011 + 0.05 \, t_m + 0.0003 \, t_m^2 + (f_{c0} + f_{c1} \, t_m + f_{c2} \, t_m^2)\,\sigma(CO_2)}{1 + f_{c3}\,\sigma(CO_2)}
+    \quad\text{avec } t_m \text{ en °C}\]</div>
+<div class='item'><span class='label'>c_p</span>: 1120.926 <code>meter ** 2 / kelvin / second ** 2</code></div>
+<div class='item'><span class='label'>Pr</span>: 0.753 <code>dimensionless</code></div>
+<div class='item'><span class='label'>psi</span>: 0.0484834</div>
+<div class='item'><span class='label'>psi_smooth</span>: 0.0442573</div>
+<div class='item'><span class='label'>Nu</span>: 10.5806</div>
+<div class='item'><span class='label'>alpha_i</span>: 1.764 <code>kilogram / kelvin / second ** 3</code></div>
+<div class='item'><span class='label'>k</span>: 1.621 <code>kilogram / kelvin / second ** 3</code></div>
+<div class='item'><span class='label'>k_b</span>: 1.500 <code>kilogram / kelvin / second ** 3</code></div>
+<div class='item'><span class='label'>K</span>: 0.673 <code>dimensionless</code></div>
+<div class='item'><span class='label'>T_ob</span>: 167.995 <code>degree_Celsius</code></div>
+<div class='item'><span class='label'>T_m</span>: 222.474 <code>degree_Celsius</code></div>
+<div class='item'><span class='label'>T_iob</span>: 25.195 <code>degree_Celsius</code></div>
