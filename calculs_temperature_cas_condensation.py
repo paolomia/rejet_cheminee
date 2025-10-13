@@ -1,9 +1,7 @@
 import math
 
-from calculs import alpha_i
 from report import *
 import json
-from joblib import Memory
 
 
 
